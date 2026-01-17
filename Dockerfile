@@ -23,4 +23,4 @@ EXPOSE 8050
 ENV PYTHONUNBUFFERED=1
 
 # Run the application with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8050", "--workers", "1", "--threads", "2", "realtime_dashboard:server"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8050", "--workers", "1", "--threads", "4", "--timeout", "120", "realtime_dashboard:server"]
