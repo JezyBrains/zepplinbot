@@ -393,9 +393,15 @@ betting_behavior = {
 
 @server.route('/api/betting-behavior', methods=['POST', 'OPTIONS'])
 def api_betting_behavior():
-    global betting_behavior
+    global betting_behavior, last_ip
     if request.method == 'OPTIONS': return '', 200
     try:
+        # Capture real IP from any data source
+        real_ip = request.headers.get('X-Forwarded-For', request.headers.get('X-Real-IP', request.remote_addr))
+        if ',' in real_ip:
+            real_ip = real_ip.split(',')[0].strip()
+        last_ip = real_ip
+        
         data = request.get_json()
         
         # Update live stats
