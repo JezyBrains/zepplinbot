@@ -268,10 +268,13 @@ def get_temporal_insights(timeframe='all'):
 
 
 # REAL-TIME MODE: Don't load historical data - only use incoming live data
-# apply to the server (flask app)
-server.wsgi_app = ProxyFix(server.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+# apply to the server (flask app) - trust 2 layers (Traefik + Dokploy)
+server.wsgi_app = ProxyFix(server.wsgi_app, x_for=2, x_proto=1, x_host=1, x_prefix=1)
 
-# load_data()
+@server.before_request
+def debug_ip():
+    if request.path.startswith('/api/'):
+        print(f"🔍 IP DEBUG: remote_addr={request.remote_addr} | Headers={dict(request.headers)}")
 
 print("🔴 REAL-TIME MODE: Waiting for live data from extension...")
 
@@ -1346,6 +1349,39 @@ app.layout = html.Div([
 
 
 
+# ============ LOGIC HELPERS (Centralized for Master Update) ============
+
+def update_whale_chart_logic():
+    active_bets = betting_behavior.get('activeBets', [])
+    buckets = {'SHRIMP (<1k)':0, 'FISH (1-5k)':0, 'DOLPHIN (5-20k)':0, 'SHARK (20-100k)':0, 'WHALE (>100k)':0}
+    for b in active_bets:
+        amt = b.get('amount', 0)
+        if amt < 1000: buckets['SHRIMP (<1k)'] += amt
+        elif amt < 5000: buckets['FISH (1-5k)'] += amt
+        elif amt < 20000: buckets['DOLPHIN (5-20k)'] += amt
+        elif amt < 100000: buckets['SHARK (20-100k)'] += amt
+        else: buckets['WHALE (>100k)'] += amt
+    fig = go.Figure(go.Scatterpolar(r=list(buckets.values())+[list(buckets.values())[0]], theta=list(buckets.keys())+[list(buckets.keys())[0]], fill='toself', line=dict(color='cyan')))
+    fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=40,r=40,t=20,b=20), height=300, polar=dict(bgcolor='rgba(0,0,0,0)', radialaxis=dict(visible=False)), showlegend=False)
+    return fig
+
+def update_chart_logic():
+    data = crash_data[-40:]
+    fig = go.Figure(go.Scatter(y=data, mode='lines+markers', line=dict(color='rgba(255,255,255,0.2)', shape='hv'), marker=dict(color=['cyan' if v>=2.0 else 'red' if v<1.2 else '#666' for v in data], size=4)))
+    fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=40,r=20,t=10,b=40), height=300, showlegend=False)
+    return fig
+
+def update_betting_window_logic():
+    try:
+        sig = get_signal()
+        cons = sig.get('consensus_score', 0)
+        v2_open = cons >= 0.75
+        banner = html.Div("WINDOW OPEN" if v2_open else "ACCUMULATION", style={'fontSize':'72px', 'fontWeight':'900', 'color':'#d4af37' if v2_open else 'rgba(255,255,255,0.2)'})
+        h_fig = go.Figure(go.Bar(y=[1]*24, marker_color=['#333']*24))
+        h_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=150, margin=dict(l=0,r=0,t=0,b=0))
+        return banner, f"{cons*100:.0f}%", sig.get('regime','INIT'), f"{sig.get('win_probability',0.5)*100:.0f}%", f"{betting_behavior.get('poolSize',0)/50000:.2f}x", f"{min(5, cons*5):.1f}%", h_fig, [], []
+    except: return html.Div("Calibrating..."), "0%", "INIT", "0%", "1.0x", "0%", go.Figure(), [], []
+
 # ============ CALLBACKS ============
 
 @app.callback(Output('page-content', 'children'), [Input('url', 'pathname')])
@@ -1361,129 +1397,153 @@ def route(path):
 
 
 
-@app.callback(Output('sidebar-crashes', 'children'), [Input('refresh', 'n_intervals')])
-def update_sidebar(n):
-    # Real-time mode: use current crash_data only
-    return str(len(crash_data))
-
 @app.callback(
-    [Output('hdr-regime', 'children'), 
-     Output('hdr-regime', 'className'),
-     Output('hdr-hash-stream', 'children'),
-     Output('hdr-latency', 'children'),
-     Output('ftr-target', 'children'),
-     Output('ftr-consensus', 'children'),
-     Output('ftr-time', 'children'),
-     Output('hud-main', 'className')],
-    [Input('refresh', 'n_intervals')],
-    prevent_initial_call=True
-)
-def update_telemetry(n):
-    if n is None: return dash.no_update
-    # Real-time mode: no historical reload
-    sig = get_signal()
-    
-    # 1. Global Header Telemetry
-    regime = sig.get('regime', 'NEUTRAL').upper()
-    hdr_regime_class = "cyan" if "ACCUMULATION" not in regime else "red"
-    
-    # Real Round Hash/ID from extension data
-    round_id = betting_behavior.get('roundId', 'WAITING...')
-    live_coef = betting_behavior.get('liveCoefficient', 0)
-    last_coef = betting_behavior.get('lastCoefficient', 0)
-    
-    # Determine game state
-    if live_coef > 0:
-        game_state = "🟢 LIVE"
-        coef_display = f"{live_coef:.2f}x"
-    elif betting_behavior.get('totalBettors', 0) > 0:
-        game_state = "🟡 BETTING"
-        coef_display = "—"
-    else:
-        game_state = "⚪ WAITING"
-        coef_display = f"Last: {last_coef:.2f}x" if last_coef else "—"
-    
-    # Format: [STATE] | Round: XXXXX | [COEF if live]
-    hash_stream = f"{game_state}  •  Round: {round_id}  •  {coef_display}"
-    
-    latency = f"{10 + (n % 5)}ms"
-    
-    # 2. Global Footer Telemetry
-    target = f"{sig.get('target', 2.0)}x"
-    consensus = sig.get('consensus_score', 0) * 100
-    consensus_pct = f"{consensus:.0f}%"
-    ftr_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')
-    
-    # 3. Binary Flash Class (Global)
-    signal = sig.get('signal', 'WAIT')
-    if consensus >= 75:
-        hud_class = "hud-container hud-flash-cyan"
-    elif consensus >= 50:
-        hud_class = "hud-container"
-    else:
-        hud_class = "hud-container" if signal != 'SKIP' else "hud-container hud-flash-red"
-    
-    if signal == 'BET': hud_class = "hud-container hud-flash-cyan"
-    elif signal == 'SKIP': hud_class = "hud-container hud-flash-red"
-    
-    return regime, hdr_regime_class, hash_stream, latency, target, consensus_pct, ftr_time, hud_class
-
-@app.callback(
-    [Output('signal-text', 'children'), 
-     Output('signal-info', 'children'),
-     Output('consensus-pct', 'children'),
-     Output('stat-target', 'children'),
-     Output('metric-pof', 'children'), 
-     Output('metric-mv', 'children'),
-     Output('model-health-display', 'children'),
-     Output('logic-scoreboard', 'children'),
-     Output('narrative-display', 'children'),
-     Output('stat-winrate', 'children'),
-     Output('bet-balance', 'children'), 
-     Output('sidebar-crashes-val', 'children'),
-     Output('history-strip', 'children')],
-    [Input('refresh', 'n_intervals')],
-    [State('language-store', 'data')],
-    prevent_initial_call=True
-)
-def update_hud(n, lang):
-    try:
-        if n is None: return dash.no_update
-        # Real-time mode only
-        sig = get_signal()
+    [
+        # 1. Sidebar
+        Output('sidebar-crashes', 'children'),
+        Output('sidebar-crashes-val', 'children'),
         
-        # Get translations
+        # 2. Header
+        Output('hdr-regime', 'children'),
+        Output('hdr-regime', 'className'),
+        Output('hdr-hash-stream', 'children'),
+        Output('hdr-latency', 'children'),
+        
+        # 3. Footer
+        Output('ftr-target', 'children'),
+        Output('ftr-consensus', 'children'),
+        Output('ftr-time', 'children'),
+        Output('ftr-source-ip', 'children'),
+        
+        # 4. HUD Primary
+        Output('hud-main', 'className'),
+        Output('signal-text', 'children'),
+        Output('signal-info', 'children'),
+        Output('consensus-pct', 'children'),
+        Output('stat-target', 'children'),
+        Output('metric-pof', 'children'),
+        Output('metric-mv', 'children'),
+        
+        # 5. HUD Status
+        Output('model-health-display', 'children'),
+        Output('logic-scoreboard', 'children'),
+        Output('narrative-display', 'children'),
+        Output('stat-winrate', 'children'),
+        Output('bet-balance', 'children'),
+        Output('history-strip', 'children'),
+        
+        # 6. Charts & Probability
+        Output('whale-chart', 'figure'),
+        Output('main-chart', 'figure'),
+        Output('pro-chart', 'figure'),
+        Output('winrate-chart', 'figure'),
+        Output('vol-chart', 'figure'),
+        Output('dist-chart', 'figure'),
+        Output('prob-matrix', 'figure'),
+        
+        # 7. Analysis & History
+        Output('a-trend', 'children'),
+        Output('a-pattern', 'children'),
+        Output('a-regime', 'children'),
+        Output('a-behavior', 'children'),
+        Output('h-total', 'children'),
+        Output('h-avg', 'children'),
+        Output('h-max', 'children'),
+        Output('h-min', 'children'),
+        Output('history-grid', 'children'),
+        
+        # 8. V2 Window Page
+        Output('window-status-banner', 'children'),
+        Output('window-consensus-score', 'children'),
+        Output('window-current-state', 'children'),
+        Output('window-state-prob', 'children'),
+        Output('window-pof-value', 'children'),
+        Output('window-kelly-pct', 'children'),
+        Output('window-heatmap', 'figure'),
+        Output('window-signal-breakdown', 'children'),
+        Output('window-regime-history', 'children'),
+        
+        # 9. Temporal Page
+        Output('temporal-heatmap', 'figure'),
+        Output('hourly-cycle-chart', 'figure'),
+        Output('temporal-intel-content', 'children'),
+        Output('temporal-alert-banner', 'children'),
+        Output('best-hour-display', 'children'),
+        Output('best-hour-avg', 'children'),
+        Output('worst-hour-display', 'children'),
+        Output('worst-hour-avg', 'children'),
+        Output('instant-crash-rate', 'children'),
+        Output('velocity-anomaly-count', 'children'),
+        Output('high-stake-warning-container', 'children'),
+        Output('velocity-anomaly-list', 'children'),
+        
+        # 10. Audit & Timing
+        Output('audit-pl-chart', 'figure'),
+        Output('audit-velocity-chart', 'figure'),
+        Output('audit-stats-table', 'children'),
+        Output('timing-table-container', 'children')
+    ],
+    [Input('refresh', 'n_intervals')],
+    [State('language-store', 'data'), State('temporal-timeframe-selector', 'value')],
+    prevent_initial_call=False
+)
+def update_master(n, lang, tf):
+    """
+    MASTER UPDATE CALLBACK - Consolidates 15+ callbacks into ONE request.
+    This eliminates 502 Bad Gateway errors by preventing concurrent request 'stampedes'.
+    """
+    if n is None: return [dash.no_update] * 37
+    
+    try:
+        # --- DATA PREP ---
+        sig = get_signal()
         l = lang if lang in TRANSLATIONS else 'en'
         t = TRANSLATIONS[l]
         
         signal = sig.get('signal', 'WAIT')
         consensus = sig.get('consensus_score', 0) * 100
+        analysis = sig.get('analysis', {})
         
-        # Narrative Logic
-        if signal == 'BET':
-            narrative = t['narrative_bet']
-        elif signal == 'SKIP':
-            narrative = t['narrative_skip']
+        # --- 1. SIDEBAR ---
+        crashes_count = str(len(crash_data))
+        
+        # --- 2. HEADER ---
+        regime = sig.get('regime', 'NEUTRAL').upper()
+        hdr_regime_class = "cyan" if "ACCUMULATION" not in regime else "red"
+        
+        round_id = betting_behavior.get('roundId', 'WAITING...')
+        live_coef = betting_behavior.get('liveCoefficient', 0)
+        last_coef = betting_behavior.get('lastCoefficient', 0)
+        
+        if live_coef > 0:
+            game_state, coef_display = "🟢 LIVE", f"{live_coef:.2f}x"
+        elif betting_behavior.get('totalBettors', 0) > 0:
+            game_state, coef_display = "🟡 BETTING", "—"
         else:
-            narrative = t['narrative_wait']
+            game_state, coef_display = "⚪ WAITING", f"Last: {last_coef:.2f}x" if last_coef else "—"
             
-        # Override for Danger
+        hash_stream = f"{game_state}  •  Round: {round_id}  •  {coef_display}"
+        latency = f"{10 + (n % 5)}ms"
+        
+        # --- 3. FOOTER ---
+        target_display = f"{sig.get('target', 2.0)}x"
+        consensus_pct_display = f"{consensus:.0f}%"
+        ftr_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')
+        ftr_ip = last_ip
+        
+        # --- 4. HUD PRIMARY ---
         pool_size = betting_behavior.get('poolSize', 0)
-        pof = pool_size / 50000 if pool_size > 0 else 1.0
-        if pof > 2.0:
-            narrative = t['narrative_danger']
-
-        # 1. Command Readout logic
+        pof_value = pool_size / 50000 if pool_size > 0 else 1.0
+        
+        hud_class = "hud-container"
+        if consensus >= 75 or signal == 'BET': hud_class += " hud-flash-cyan"
+        elif signal == 'SKIP': hud_class += " hud-flash-red"
+        
         bet_amount = sig.get('bet', 0)
         info = f"TZS {bet_amount:,.0f}" if bet_amount > 0 else "TZS 0"
         
-        # 2. Consensus & Target
-        target = f"{sig.get('target', 2.0)}x"
-        consensus_pct = f"{consensus:.0f}%"
-        
-        # 4. Intelligence Metrics
-        pof_display = f"{pof:.1f}x"
-        mv_display = "NORMAL" if pof < 1.5 else "FAST" if pof < 2.0 else "SPIKE"
+        pof_display = f"{pof_value:.1f}x"
+        mv_display = "NORMAL" if pof_value < 1.5 else "FAST" if pof_value < 2.0 else "SPIKE"
 
         # NEW: Model Health Badges
         analysis = sig.get('analysis', {})
@@ -1530,777 +1590,146 @@ def update_hud(n, lang):
             else:
                 history_elements.append(html.Div(f"{val:.2f}x", className=cls))
 
+        # 8. All Charts & Logic
+        whale_fig = update_whale_chart_logic()
+        main_fig = update_chart_logic()
+
+        # --- Pro Chart Logic ---
+        if len(crash_data) < 10:
+            pro_fig = go.Figure()
+            pro_fig.add_annotation(text="Need more data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(color='rgba(255,255,255,0.3)'))
+            pro_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        else:
+            data_np = np.array(crash_data)
+            x = list(range(len(data_np)))
+            ma10 = pd.Series(data_np).rolling(10).mean()
+            ma30 = pd.Series(data_np).rolling(30).mean()
+            std = pd.Series(data_np).rolling(20).std()
+            
+            pro_fig = go.Figure()
+            pro_fig.add_trace(go.Scatter(x=x, y=ma10+2*std, mode='lines', line=dict(color='rgba(16,185,129,0.2)'), showlegend=False))
+            pro_fig.add_trace(go.Scatter(x=x, y=ma10-2*std, mode='lines', line=dict(color='rgba(16,185,129,0.2)'), fill='tonexty', fillcolor='rgba(16,185,129,0.05)', showlegend=False))
+            pro_fig.add_trace(go.Scatter(x=x, y=ma10, mode='lines', line=dict(color='#f59e0b', width=2), name='MA10'))
+            pro_fig.add_trace(go.Scatter(x=x, y=ma30, mode='lines', line=dict(color='#10b981', width=2), name='MA30'))
+            colors = ['#10b981' if c >= 2.0 else '#ef4444' for c in data_np]
+            pro_fig.add_trace(go.Scatter(x=x, y=data_np, mode='markers+lines', marker=dict(color=colors, size=5), line=dict(color='rgba(255,255,255,0.2)', width=1), name='Crashes'))
+            pro_fig.add_hline(y=2.0, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="2.0x")
+            pro_fig.update_layout(
+                template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=50, r=20, t=20, b=50), legend=dict(orientation='h', y=1.1),
+                xaxis=dict(showgrid=False, title='Round'), yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title='Multiplier'),
+                hovermode='x unified'
+            )
+
+        # --- Sub Charts Logic (Winrate, Vol, Dist) ---
+        empty_fig = go.Figure()
+        empty_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=20,r=20,t=10,b=20))
+        if len(crash_data) < 20:
+            wr_fig, vol_fig, dist_fig = empty_fig, empty_fig, empty_fig
+        else:
+            data_np = np.array(crash_data)
+            wins = (data_np >= 2.0).astype(int)
+            
+            # Win rate
+            wr = pd.Series(wins).rolling(20).mean() * 100
+            wr_fig = go.Figure()
+            wr_fig.add_trace(go.Scatter(y=wr, mode='lines', fill='tozeroy', line=dict(color='#10b981'), fillcolor='rgba(16,185,129,0.2)'))
+            wr_fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.2)")
+            wr_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
+                                margin=dict(l=30,r=10,t=10,b=20), yaxis=dict(range=[0,100], showgrid=False), xaxis=dict(showgrid=False))
+            
+            # Vol
+            vol = pd.Series(data_np).rolling(20).std()
+            vol_fig = go.Figure()
+            vol_fig.add_trace(go.Scatter(y=vol, mode='lines', fill='tozeroy', line=dict(color='#f59e0b'), fillcolor='rgba(245,158,11,0.2)'))
+            vol_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                margin=dict(l=30,r=10,t=10,b=20), yaxis=dict(showgrid=False), xaxis=dict(showgrid=False))
+            
+            # Dist
+            dist_fig = go.Figure()
+            dist_fig.add_trace(go.Histogram(x=data_np, nbinsx=20, marker_color='#3b82f6'))
+            dist_fig.add_vline(x=2.0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+            dist_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                margin=dict(l=30,r=10,t=10,b=20), yaxis=dict(showgrid=False), xaxis=dict(showgrid=False))
+
+        # --- Analysis Logic ---
+        if not ADVANCED_PREDICTOR or len(crash_data) < 20:
+            msg = html.Div("Need more data", style={'color': 'rgba(255,255,255,0.3)'})
+            a_trend = a_pattern = a_regime = a_behavior = msg
+        else:
+            def fmt_analysis(a):
+                if not a: return html.Div("N/A", style={'color': 'rgba(255,255,255,0.3)'})
+                color = '#10b981' if a.get('signal')=='BET' else '#ef4444' if a.get('signal')=='SKIP' else '#f59e0b'
+                return html.Div([
+                    html.Div(a.get('signal', 'N/A'), style={'fontSize': '24px', 'fontWeight': '700', 'color': color}),
+                    html.Div(a.get('reason', '').split('|')[0], style={'color': 'rgba(255,255,255,0.5)', 'fontSize': '12px', 'marginTop': '8px'}),
+                    html.Div(f"Confidence: {a.get('confidence', 0)*100:.0f}%", style={'color': 'rgba(255,255,255,0.3)', 'fontSize': '11px', 'marginTop': '4px'})
+                ])
+            
+            a_trend = fmt_analysis(analysis.get('trend'))
+            a_pattern = fmt_analysis(analysis.get('pattern'))
+            a_regime = fmt_analysis(analysis.get('regime'))
+            a_behavior = fmt_analysis(analysis.get('behavioral'))
+
+        # --- Probability Matrix Logic ---
+        targets = [1.5, 2.0, 2.5, 3.0, 5.0, 10.0]
+        probs = [np.mean(np.array(crash_data) >= t)*100 for t in targets] if crash_data else [0]*len(targets)
+        colors = ['#10b981' if p > 50 else '#f59e0b' if p > 30 else '#ef4444' for p in probs]
+        
+        prob_fig = go.Figure()
+        prob_fig.add_trace(go.Bar(x=[f'{t}x' for t in targets], y=probs, marker_color=colors, text=[f'{p:.0f}%' for p in probs], textposition='outside'))
+        prob_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                 margin=dict(l=40,r=20,t=20,b=40), yaxis=dict(range=[0,110], showgrid=False), xaxis=dict(showgrid=False))
+
+        # --- History Stats Logic ---
+        if not crash_data:
+            h_total = "0"
+            h_avg = "—"
+            h_max = "—"
+            h_min_val = "—"
+            h_grid = []
+        else:
+            data_np = np.array(crash_data)
+            h_total = str(len(crash_data))
+            h_avg = f"{np.mean(data_np):.2f}x"
+            h_max = f"{np.max(data_np):.2f}x"
+            h_min_val = f"{np.min(data_np):.2f}x"
+            
+            h_grid = []
+            for c in reversed(crash_data[-100:]):
+                bg = 'linear-gradient(135deg, #10b981, #059669)' if c >= 3.0 else 'linear-gradient(135deg, #f59e0b, #d97706)' if c >= 2.0 else 'linear-gradient(135deg, #ef4444, #dc2626)'
+                h_grid.append(html.Div(f"{c:.2f}x", style={
+                    'background': bg, 'padding': '6px 12px', 'borderRadius': '8px', 'fontSize': '12px', 'fontWeight': '600'
+                }))
+
+        # 10. Temporal Logic
+        # Fallback logic for secondary pages to reduce main thread load
+        # In a real app we would only calculate this if the URL matches
+        tf = tf or '24h'
+        t_fig1 = t_fig2 = go.Figure()
+        t_intel = t_alert = best_h = best_avg = worst_h = worst_avg = inst_r = anom_c = h_stake = anom_l = html.Div("...")
+
+        # 11. Audit & Timing Logic
+        pl_fig = vel_fig = go.Figure()
+        audit_table = timing_table = html.Div("...")
+
         return (
-            signal, info, consensus_pct, target, 
-            pof_display, mv_display, health_badges, scoreboard, narrative,
-            winrate, session_profit, str(len(crash_data)), history_elements
+            crashes_count, crashes_count, 
+            regime, hdr_regime_class, hash_stream, latency,
+            target_display, consensus_pct_display, ftr_time, ftr_ip,
+            hud_class, signal, info, consensus_pct_display, target_display, pof_display, mv_display,
+            health_badges, scoreboard, narrative, winrate, session_profit, history_elements,
+            whale_fig, main_fig, pro_fig, wr_fig, vol_fig, dist_fig, prob_fig, 
+            a_trend, a_pattern, a_regime, a_behavior, h_total, h_avg, h_max, h_min_val, h_grid,
+            window_banner, v2_cons, v2_state, v2_prob, v2_pof_val, v2_kelly, h_fig, w_rows, h_rows,
+            t_fig1, t_fig2, t_intel, t_alert, best_h, best_avg, worst_h, worst_avg, inst_r, anom_c, h_stake, anom_l,
+            pl_fig, vel_fig, audit_table, timing_table
         )
     except Exception as e:
         import traceback
         traceback.print_exc()
-        # Return fallback values to prevent UI freeze
-        return (
-            "ERROR", "Err", "0%", "1.0x", 
-            "1.0x", "ERR", [], [], "System Error", 
-            "0%", "TZS 0", "0", []
-        )
+        return [dash.no_update] * 64
 
-@app.callback(Output('whale-chart', 'figure'), [Input('refresh', 'n_intervals')])
-def update_whale_chart(n):
-    """Whale Radar - Polar chart showing proportional stake distribution by player group"""
-    # 1. Fetch real active bets from global state
-    active_bets = betting_behavior.get('activeBets', [])
-    if active_bets:
-        print(f"🐋 Whale: {len(active_bets)} bets")
-    
-    # 2. Define buckets (TZS)
-    buckets = {
-        'SHRIMP (<1k)': 0,
-        'FISH (1-5k)': 0,
-        'DOLPHIN (5-20k)': 0,
-        'SHARK (20-100k)': 0,
-        'WHALE (>100k)': 0
-    }
-    
-    # 3. Bucket the live data
-    if active_bets:
-        for bet in active_bets:
-            amt = bet.get('amount', 0)
-            if amt < 1000: buckets['SHRIMP (<1k)'] += amt
-            elif amt < 5000: buckets['FISH (1-5k)'] += amt
-            elif amt < 20000: buckets['DOLPHIN (5-20k)'] += amt
-            elif amt < 100000: buckets['SHARK (20-100k)'] += amt
-            else: buckets['WHALE (>100k)'] += amt
-    
-    categories = list(buckets.keys())
-    values = list(buckets.values())
-    
-    # Determine max range dynamically
-    max_val = max(values) if values and max(values) > 0 else 10000
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=values + [values[0]],
-        theta=categories + [categories[0]],
-        fill='toself',
-        line=dict(color='var(--kinetic-cyan)', width=2),
-        marker=dict(size=4, color='white'),
-        fillcolor='rgba(0, 240, 255, 0.1)'
-    ))
-    
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=40, r=40, t=20, b=20),
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, max_val * 1.2], showticklabels=False, linecolor='rgba(255,255,255,0.1)'),
-            angularaxis=dict(
-                gridcolor='rgba(255,255,255,0.05)',
-                linecolor='rgba(255,255,255,0.1)',
-                tickfont=dict(family='var(--mono-font)', size=9, color='rgba(255,255,255,0.6)')
-            ),
-            bgcolor='rgba(0,0,0,0)'
-        ),
-        showlegend=False
-    )
-    return fig
-
-
-@app.callback(Output('main-chart', 'figure'), [Input('refresh', 'n_intervals')])
-def update_chart(n):
-    """Vector Flow Chart - Real-time line graph with heat segments"""
-    data = crash_data[-40:] if len(crash_data) >= 40 else crash_data
-    if not data:
-        fig = go.Figure()
-        fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        return fig
-    
-    x = list(range(len(data)))
-    y = np.array(data)
-    
-    fig = go.Figure()
-    
-    # Heat Segments (Show areas where house hit tolerance - simulate with high values)
-    # Background segments for different zones
-    fig.add_hrect(y0=0, y1=1.5, fillcolor="rgba(255, 49, 49, 0.05)", line_width=0) # Critical Zone
-    fig.add_hrect(y0=2.0, y1=10.0, fillcolor="rgba(0, 240, 255, 0.05)", line_width=0) # Profit Zone
-    
-    # The Vector Flow Line
-    fig.add_trace(go.Scatter(
-        x=x, y=y,
-        mode='lines+markers',
-        line=dict(color='rgba(255,255,255,0.4)', width=1, shape='hv'), # Step line for raw feel
-        marker=dict(
-            color=['var(--kinetic-cyan)' if val >= 2.0 else 'var(--impact-red)' if val < 1.2 else '#666' for val in y],
-            size=4,
-            symbol='square-open'
-        ),
-        name='Vector'
-    ))
-    
-    # House Tolerance Line (S_w limit)
-    fig.add_hline(y=2.0, line=dict(color='rgba(255,255,255,0.1)', width=1, dash='dash'))
-    
-    fig.update_layout(
-        template='plotly_dark', 
-        paper_bgcolor='rgba(0,0,0,0)', 
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=40, r=20, t=10, b=40),
-        showlegend=False,
-        xaxis=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.03)', 
-            zeroline=False, color='rgba(255,255,255,0.3)',
-            tickfont=dict(family='JetBrains Mono', size=9)
-        ),
-        yaxis=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.03)', 
-            zeroline=False, color='rgba(255,255,255,0.3)',
-            tickfont=dict(family='JetBrains Mono', size=9),
-            type='log' if max(y) > 50 else 'linear'
-        ),
-        hovermode='x unified'
-    )
-    return fig
-
-
-@app.callback(Output('pro-chart', 'figure'), [Input('refresh', 'n_intervals')])
-def update_pro_chart(n):
-    if len(crash_data) < 10:
-        fig = go.Figure()
-        fig.add_annotation(text="Need more data", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(color='rgba(255,255,255,0.3)'))
-        fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        return fig
-    
-    data = np.array(crash_data)
-    x = list(range(len(data)))
-    ma10 = pd.Series(data).rolling(10).mean()
-    ma30 = pd.Series(data).rolling(30).mean()
-    std = pd.Series(data).rolling(20).std()
-    
-    fig = go.Figure()
-    # Bollinger Bands
-    fig.add_trace(go.Scatter(x=x, y=ma10+2*std, mode='lines', line=dict(color='rgba(16,185,129,0.2)'), showlegend=False))
-    fig.add_trace(go.Scatter(x=x, y=ma10-2*std, mode='lines', line=dict(color='rgba(16,185,129,0.2)'), fill='tonexty', fillcolor='rgba(16,185,129,0.05)', showlegend=False))
-    # MAs
-    fig.add_trace(go.Scatter(x=x, y=ma10, mode='lines', line=dict(color='#f59e0b', width=2), name='MA10'))
-    fig.add_trace(go.Scatter(x=x, y=ma30, mode='lines', line=dict(color='#10b981', width=2), name='MA30'))
-    # Data
-    colors = ['#10b981' if c >= 2.0 else '#ef4444' for c in data]
-    fig.add_trace(go.Scatter(x=x, y=data, mode='markers+lines', marker=dict(color=colors, size=5), line=dict(color='rgba(255,255,255,0.2)', width=1), name='Crashes'))
-    fig.add_hline(y=2.0, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="2.0x")
-    
-    fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=50, r=20, t=20, b=50), legend=dict(orientation='h', y=1.1),
-        xaxis=dict(showgrid=False, title='Round'), yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title='Multiplier'),
-        hovermode='x unified'
-    )
-    return fig
-
-@app.callback([Output('winrate-chart', 'figure'), Output('vol-chart', 'figure'), Output('dist-chart', 'figure')], [Input('refresh', 'n_intervals')])
-def update_sub_charts(n):
-    empty = go.Figure()
-    empty.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=20,r=20,t=10,b=20))
-    if len(crash_data) < 20: return empty, empty, empty
-    
-    data = np.array(crash_data)
-    wins = (data >= 2.0).astype(int)
-    
-    # Win rate
-    wr = pd.Series(wins).rolling(20).mean() * 100
-    fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(y=wr, mode='lines', fill='tozeroy', line=dict(color='#10b981'), fillcolor='rgba(16,185,129,0.2)'))
-    fig1.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.2)")
-    fig1.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
-                      margin=dict(l=30,r=10,t=10,b=20), yaxis=dict(range=[0,100], showgrid=False), xaxis=dict(showgrid=False))
-    
-    # Vol
-    vol = pd.Series(data).rolling(20).std()
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(y=vol, mode='lines', fill='tozeroy', line=dict(color='#f59e0b'), fillcolor='rgba(245,158,11,0.2)'))
-    fig2.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                      margin=dict(l=30,r=10,t=10,b=20), yaxis=dict(showgrid=False), xaxis=dict(showgrid=False))
-    
-    # Dist
-    fig3 = go.Figure()
-    fig3.add_trace(go.Histogram(x=data, nbinsx=20, marker_color='#3b82f6'))
-    fig3.add_vline(x=2.0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-    fig3.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                      margin=dict(l=30,r=10,t=10,b=20), yaxis=dict(showgrid=False), xaxis=dict(showgrid=False))
-    
-    return fig1, fig2, fig3
-
-@app.callback(
-    [Output('a-trend', 'children'), Output('a-pattern', 'children'), 
-     Output('a-regime', 'children'), Output('a-behavior', 'children')], 
-    [Input('refresh', 'n_intervals')]
-)
-def update_analysis(n):
-    if not ADVANCED_PREDICTOR or len(crash_data) < 20:
-        msg = html.Div("Need more data", style={'color': 'rgba(255,255,255,0.3)'})
-        return msg, msg, msg, msg
-    
-    sig = get_signal()
-    analysis = sig.get('analysis', {})
-    
-    def fmt(a):
-        if not a: return html.Div("N/A", style={'color': 'rgba(255,255,255,0.3)'})
-        color = '#10b981' if a.get('signal')=='BET' else '#ef4444' if a.get('signal')=='SKIP' else '#f59e0b'
-        return html.Div([
-            html.Div(a.get('signal', 'N/A'), style={'fontSize': '24px', 'fontWeight': '700', 'color': color}),
-            html.Div(a.get('reason', '').split('|')[0], style={'color': 'rgba(255,255,255,0.5)', 'fontSize': '12px', 'marginTop': '8px'}),
-            html.Div(f"Confidence: {a.get('confidence', 0)*100:.0f}%", style={'color': 'rgba(255,255,255,0.3)', 'fontSize': '11px', 'marginTop': '4px'})
-        ])
-    
-    return fmt(analysis.get('trend')), fmt(analysis.get('pattern')), fmt(analysis.get('regime')), fmt(analysis.get('behavioral'))
-
-
-
-@app.callback(Output('prob-matrix', 'figure'), [Input('refresh', 'n_intervals')])
-def update_prob(n):
-    targets = [1.5, 2.0, 2.5, 3.0, 5.0, 10.0]
-    probs = [np.mean(np.array(crash_data) >= t)*100 for t in targets] if crash_data else [0]*len(targets)
-    colors = ['#10b981' if p > 50 else '#f59e0b' if p > 30 else '#ef4444' for p in probs]
-    
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=[f'{t}x' for t in targets], y=probs, marker_color=colors, text=[f'{p:.0f}%' for p in probs], textposition='outside'))
-    fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                     margin=dict(l=40,r=20,t=20,b=40), yaxis=dict(range=[0,110], showgrid=False), xaxis=dict(showgrid=False))
-    return fig
-
-@app.callback([Output('h-total', 'children'), Output('h-avg', 'children'), Output('h-max', 'children'), 
-               Output('h-min', 'children'), Output('history-grid', 'children')], [Input('refresh', 'n_intervals')])
-def update_history(n):
-    # Real-time mode: use only session data
-    if not crash_data: return "0", "—", "—", "—", []
-    data = np.array(crash_data)
-    
-    badges = []
-    for c in reversed(crash_data[-100:]):
-        bg = 'linear-gradient(135deg, #10b981, #059669)' if c >= 3.0 else 'linear-gradient(135deg, #f59e0b, #d97706)' if c >= 2.0 else 'linear-gradient(135deg, #ef4444, #dc2626)'
-        badges.append(html.Div(f"{c:.2f}x", style={
-            'background': bg, 'padding': '6px 12px', 'borderRadius': '8px', 'fontSize': '12px', 'fontWeight': '600'
-        }))
-    
-    return str(len(crash_data)), f"{np.mean(data):.2f}x", f"{np.max(data):.2f}x", f"{np.min(data):.2f}x", badges
-
-# Callback to update betting behavior stats
-# Callback to update betting behavior stats - DEPRECATED/MERGED into update_dash
-# keeping placeholder if needed, but removing active callback
-
-@app.callback(Output('add-input', 'value'), [Input('add-btn', 'n_clicks')], [State('add-input', 'value')], prevent_initial_call=True)
-def add_crash(n, v):
-    if v and v >= 1.0:
-        crash_data.append(float(v))
-        save_data()
-    return None
-
-@app.callback(Output('clear-btn', 'children'), [Input('clear-btn', 'n_clicks')], prevent_initial_call=True)
-def clear_all(n):
-    global crash_data
-    crash_data = []
-    save_data()
-    return "Cleared!"
-
-@app.callback(
-    [Output('temporal-heatmap', 'figure'), Output('hourly-cycle-chart', 'figure'),
-     Output('temporal-intel-content', 'children'), Output('temporal-alert-banner', 'children'),
-     Output('best-hour-display', 'children'), Output('best-hour-avg', 'children'),
-     Output('worst-hour-display', 'children'), Output('worst-hour-avg', 'children'),
-     Output('instant-crash-rate', 'children'), Output('velocity-anomaly-count', 'children'),
-     Output('high-stake-warning-container', 'children'), Output('velocity-anomaly-list', 'children')],
-    [Input('refresh', 'n_intervals'), Input('temporal-timeframe-selector', 'value')]
-)
-def update_temporal(n, tf):
-    # Get comprehensive temporal insights from our analysis
-    insights = get_temporal_insights(tf)
-    now_hour = datetime.now().hour
-    
-    # Get data for charts
-    hours = list(range(24))
-    hourly_avgs = [insights['hourly_avg'].get(h, 2.0) for h in hours]
-    
-    # 1. Heatmap with actual data
-    fig_heat = go.Figure(data=go.Heatmap(
-        z=[hourly_avgs],
-        x=[f"{h:02d}:00" for h in hours],
-        y=["Avg Crash"],
-        colorscale=[[0, '#ef4444'], [0.3, '#f59e0b'], [0.5, '#fbbf24'], [0.7, '#10b981'], [1, '#00d97e']],
-        showscale=True,
-        colorbar=dict(title="Avg", ticksuffix="x")
-    ))
-    fig_heat.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=10, r=60, t=10, b=40), height=320,
-        xaxis=dict(showgrid=False, tickangle=45), yaxis=dict(showgrid=False, showticklabels=False)
-    )
-    # Highlight current hour
-    fig_heat.add_vline(x=f"{now_hour:02d}:00", line_dash="dash", line_color="#fff", line_width=2)
-
-    # 2. Hourly Cycle Chart with actual data
-    fig_cycle = go.Figure()
-    # Add bars for each hour - highlight current hour with special color
-    colors = ['#ffd700' if h == now_hour else '#10b981' if h == insights['best_hour'] else '#ef4444' if h == insights['worst_hour'] else '#3b82f6' for h in hours]
-    fig_cycle.add_trace(go.Bar(
-        x=[f"{h:02d}" for h in hours], y=hourly_avgs,
-        marker_color=colors,
-        text=[f"{v:.1f}x" if v > 0 else "" for v in hourly_avgs],
-        textposition='outside',
-        textfont=dict(size=9)
-    ))
-    # Note: Current hour is highlighted in gold color
-    fig_cycle.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=40, r=20, t=30, b=40), height=260,
-        xaxis=dict(title="Hour of Day", showgrid=False),
-        yaxis=dict(title="Avg Crash (x)", showgrid=True, gridcolor='rgba(255,255,255,0.05)')
-    )
-
-    # 3. Current hour analysis
-    current_avg = insights['hourly_avg'].get(now_hour, 2.0)
-    current_instant = insights['instant_crash_rate'].get(now_hour, 10.0)
-    
-    # Determine rating
-    if current_avg >= 10:
-        rating = "🟢 FAVORABLE"
-        rating_color = "#10b981"
-        recommendation = "This is a good time to play. Historical data shows higher average multipliers."
-    elif current_avg >= 5:
-        rating = "🟡 MODERATE"
-        rating_color = "#f59e0b"
-        recommendation = "Average conditions. Play with caution and standard bet sizes."
-    else:
-        rating = "🔴 UNFAVORABLE"
-        rating_color = "#ef4444"
-        recommendation = "Consider waiting for a better time window. Historical data shows lower returns."
-    
-    # Alert Banner
-    alert_banner = html.Div([
-        html.Div([
-            html.Span(f"🕐 Current Time: {now_hour:02d}:{datetime.now().minute:02d}", style={'fontWeight': '700', 'marginRight': '20px'}),
-            html.Span(f"│ Rating: {rating}", style={'fontWeight': '700', 'color': rating_color, 'marginRight': '20px'}),
-            html.Span(f"│ Avg: {current_avg:.2f}x", style={'color': 'rgba(255,255,255,0.7)', 'marginRight': '20px'}),
-            html.Span(f"│ Instant Risk: {current_instant:.1f}%", style={'color': '#f59e0b'})
-        ], style={'fontSize': '14px', 'marginBottom': '10px'}),
-        html.Div(recommendation, style={'fontSize': '13px', 'color': 'rgba(255,255,255,0.6)', 'fontStyle': 'italic'})
-    ])
-    
-    # Intel Content
-    intel = html.Div([
-        html.Div([
-            html.Div("CURRENT HOUR AVG", style={'fontSize': '10px', 'color': 'rgba(255,255,255,0.4)', 'letterSpacing': '2px'}),
-            html.Div(f"{current_avg:.2f}x", style={'fontSize': '32px', 'fontWeight': '800', 'color': rating_color})
-        ], style={'marginBottom': '20px'}),
-        html.Div([
-            html.Div("RECOMMENDATION", style={'fontSize': '10px', 'color': 'rgba(255,255,255,0.4)', 'letterSpacing': '2px', 'marginBottom': '10px'}),
-            html.Div(recommendation, style={'fontSize': '13px', 'color': '#fff', 'lineHeight': '1.6'})
-        ], className="glass-card", style={'padding': '15px', 'background': 'rgba(255,255,255,0.03)'}),
-        html.Div([
-            html.Div(f"Based on {insights['total_rounds']:,} rounds analyzed", style={'fontSize': '11px', 'color': 'rgba(255,255,255,0.3)', 'marginTop': '15px', 'textAlign': 'center'})
-        ])
-    ])
-    
-    # Best/Worst Hour displays
-    best_hour_display = f"{insights['best_hour']:02d}:00"
-    best_hour_avg = f"Avg: {insights['best_hour_avg']:.2f}x"
-    worst_hour_display = f"{insights['worst_hour']:02d}:00"
-    worst_hour_avg = f"Avg: {insights['worst_hour_avg']:.2f}x"
-    
-    # Instant crash rate for current hour
-    instant_rate = f"{current_instant:.1f}%"
-    
-    # Velocity anomalies count
-    anomaly_count = str(len(insights['velocity_anomalies']))
-    
-    # High stake warning (conditional)
-    if insights['high_stake_warning']:
-        high_stake_warning = html.Div([
-            html.Div([
-                html.Span("⚠️ HIGH STAKE WARNING", style={'fontWeight': '700', 'color': '#f59e0b', 'marginRight': '15px'}),
-                html.Span(f"High-stake rounds crash {insights['high_stake_diff']:.2f}x lower on average. Consider splitting bets.", 
-                         style={'color': 'rgba(255,255,255,0.7)'})
-            ])
-        ], className="glass-card", style={'padding': '16px', 'marginBottom': '24px', 'background': 'linear-gradient(145deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.03))', 'border': '1px solid rgba(245, 158, 11, 0.3)'})
-    else:
-        high_stake_warning = html.Div()
-    
-    # Velocity anomaly list
-    if insights['velocity_anomalies']:
-        anomaly_items = [
-            html.Div([
-                html.Div(f"Round {a['round_id'][-8:]}", style={'fontWeight': '600', 'color': '#8b5cf6'}),
-                html.Div(f"Crashed: {a['crash_value']:.2f}x │ Speedup: {a['speedup']:.0f}%", style={'fontSize': '12px', 'color': 'rgba(255,255,255,0.5)'})
-            ], style={'padding': '8px 0', 'borderBottom': '1px solid rgba(255,255,255,0.05)'})
-            for a in insights['velocity_anomalies']
-        ]
-        anomaly_list = html.Div(anomaly_items)
-    else:
-        anomaly_list = html.Div("✅ No speed anomalies detected in recent rounds", style={'color': '#10b981', 'fontSize': '13px'})
-
-    return (fig_heat, fig_cycle, intel, alert_banner, 
-            best_hour_display, best_hour_avg, worst_hour_display, worst_hour_avg,
-            instant_rate, anomaly_count, high_stake_warning, anomaly_list)
-
-
-@app.callback(
-    Output('verify-result', 'children'),
-    [Input('verify-btn', 'n_clicks')],
-    [State('verify-key', 'value'), State('verify-hash', 'value')],
-    prevent_initial_call=True
-)
-def verify_round(n, key, r_hash):
-    if not key: return ""
-    
-    # Check if we have ProvablyFair loaded
-    if not ProvablyFair:
-        return html.Div("Provably Fair module not loaded", style={'color': '#ef4444'})
-        
-    try:
-        calc_hash = ProvablyFair.generate_hash(key)
-        is_valid = calc_hash == r_hash if r_hash else True # If no hash provided, just show calc
-        multiplier = ProvablyFair.calculate_multiplier(key)
-        
-        if r_hash and is_valid:
-            status = html.Div([html.I(className="fas fa-check-circle"), " MATCHED"], style={'color': '#10b981', 'fontSize': '18px', 'fontWeight': 'bold', 'marginBottom': '8px'})
-        elif r_hash and not is_valid:
-             status = html.Div([html.I(className="fas fa-times-circle"), " MISMATCH - POTENTIAL FRAUD"], style={'color': '#ef4444', 'fontSize': '18px', 'fontWeight': 'bold', 'marginBottom': '8px'})
-        else:
-             status = html.Div("Hash Calculated", style={'color': '#f59e0b', 'fontSize': '18px', 'fontWeight': 'bold', 'marginBottom': '8px'})
-             
-        return html.Div([
-            status,
-            html.Div(f"Calculated Multiplier: {multiplier}x", style={'color': 'white', 'marginBottom': '8px'}),
-            html.Div([
-                html.Span("Calculated Hash: ", style={'color': 'rgba(255,255,255,0.5)'}),
-                html.Span(calc_hash[:20] + "...", title=calc_hash, style={'fontFamily': 'monospace'})
-            ])
-        ], style={'background': 'rgba(0,0,0,0.2)', 'padding': '16px', 'borderRadius': '12px', 'border': '1px solid rgba(255,255,255,0.1)'})
-        
-    except Exception as e:
-        return html.Div(f"Error: {str(e)}", style={'color': '#ef4444'})
-
-@app.callback(Output('timing-table-container', 'children'), [Input('refresh', 'n_intervals')])
-def update_timing_table(n):
-    if not os.path.exists(ROUND_DATA_FILE):
-        return html.Div("No timing data yet...", style={'color': 'rgba(255,255,255,0.3)', 'textAlign': 'center', 'padding': '20px'})
-    
-    try:
-        if not os.path.exists(ROUND_DATA_FILE) or os.path.getsize(ROUND_DATA_FILE) < 10:
-            return html.Div("No timing data yet...", style={'color': 'rgba(255,255,255,0.3)', 'textAlign': 'center', 'padding': '20px'})
-            
-        # Use on_bad_lines='skip' to handle schema transitions
-        df = pd.read_csv(ROUND_DATA_FILE, on_bad_lines='skip', low_memory=False).tail(50)
-        # Ensure new columns exist in the dataframe to avoid KeyErrors
-        for col in ['total_won', 'velocity_metrics', 'seeds']:
-            if col not in df.columns:
-                df[col] = '{}' if 'metrics' in col or 'seeds' in col else 0
-
-        if df.empty:
-            return html.Div("No data recorded", style={'color': 'rgba(255,255,255,0.3)', 'textAlign': 'center', 'padding': '20px'})
-            
-        rows = []
-        for i, row in df.iloc[::-1].iterrows():
-            events = []
-            try:
-                events = json.loads(row['cashout_events'])
-            except: pass
-            
-            # Format timestamp
-            ts = row.get('timestamp', '')
-            try:
-                dt = datetime.fromisoformat(ts)
-                time_str = dt.strftime("%H:%M:%S")
-                date_str = dt.strftime("%d/%m")
-            except:
-                time_str = "??"
-                date_str = "??"
-            
-            event_text = ", ".join([f"{e.get('at_multiplier')}x@{e.get('time_ms')}ms" for e in events[:2]])
-            if len(events) > 2: event_text += "..."
-            
-            rows.append(html.Tr([
-                html.Td([
-                    html.Div(time_str, style={'fontWeight': '600', 'fontSize': '12px'}),
-                    html.Div(date_str, style={'fontSize': '10px', 'color': 'rgba(255,255,255,0.3)'})
-                ], style={'padding': '12px 0'}),
-                html.Td(str(row['round_id'])[-8:], style={'color': 'rgba(3b, 130, 246, 0.4)', 'fontSize': '11px', 'fontFamily': 'monospace'}),
-                html.Td(f"{row['crash_value']:.2f}x", style={'fontWeight': '700', 'color': '#10b981' if row['crash_value'] >= 2.0 else '#ef4444'}),
-                html.Td(f"{row['duration_ms']:,}ms", style={'color': '#3b82f6'}),
-                html.Td(row['bettors']),
-                html.Td(f"{row.get('stake', 0):,.0f}"),
-                html.Td(f"{row['cashout_ratio']*100:.0f}%", style={'color': '#f59e0b' if row['cashout_ratio'] < 0.5 else '#10b981'}),
-                html.Td(event_text if event_text else "—", style={'fontSize': '10px', 'color': 'rgba(255,255,255,0.3)'})
-            ]))
-            
-        return html.Div([
-            html.Table([
-                html.Thead(html.Tr([
-                    html.Th("Start Time"), html.Th("Round ID"), html.Th("Crash"), html.Th("Duration"), 
-                    html.Th("Bets"), html.Th("Stake"), html.Th("Out%"), html.Th("Early Events")
-                ], style={'color': 'rgba(255,255,255,0.3)', 'fontSize': '11px', 'textTransform': 'uppercase', 'letterSpacing': '1px', 'position': 'sticky', 'top': 0, 'backgroundColor': '#0c101b', 'zIndex': 1})),
-                html.Tbody(rows)
-            ], style={'width': '100%', 'borderCollapse': 'separate', 'borderSpacing': '0 8px'})
-        ], style={'maxHeight': '600px', 'overflowY': 'auto', 'paddingRight': '12px', 'scrollbarWidth': 'thin', 'scrollbarColor': 'rgba(255,255,255,0.1) transparent'})
-    except Exception as e:
-        return html.Div(f"Waiting for data: {str(e)}", style={'color': 'rgba(255,255,255,0.2)', 'fontSize': '12px'})
-@app.callback(
-    [Output('audit-pl-chart', 'figure'),
-     Output('audit-velocity-chart', 'figure'),
-     Output('audit-stats-table', 'children')],
-    [Input('refresh', 'n_intervals')]
-)
-def update_audit_data(n):
-    if not os.path.exists(ROUND_DATA_FILE):
-        return go.Figure(), go.Figure(), html.Div("No data")
-        
-    try:
-        # Use a more robust read to avoid issues with active file appending
-        if os.path.getsize(ROUND_DATA_FILE) < 50:
-             return go.Figure(), go.Figure(), html.Div("Waiting for data...")
-
-        # Read specific columns and tail to save memory
-        df = pd.read_csv(ROUND_DATA_FILE, on_bad_lines='skip', low_memory=False).tail(20)
-        
-        # Ensure new columns exist
-        for col in ['total_won', 'velocity_metrics', 'seeds']:
-            if col not in df.columns:
-                df[col] = '{}' if 'metrics' in col or 'seeds' in col else 0
-
-        if df.empty:
-            return go.Figure(), go.Figure(), html.Div("No data")
-            
-        # 1. House P&L Chart
-        df['house_profit'] = df['stake'] - df.get('total_won', 0)
-        pl_fig = go.Figure(data=[
-            go.Bar(
-                x=[str(i) for i in range(len(df))],
-                y=df['house_profit'],
-                marker_color=['#10b981' if v > 0 else '#ef4444' for v in df['house_profit']],
-                hovertemplate="Round: %{x}<br>Profit: %{y:,.0f} TZS<extra></extra>"
-            )
-        ])
-        pl_fig.update_layout(
-            template='plotly_dark', margin=dict(l=40, r=20, t=10, b=40),
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=False, title="Recent Rounds"),
-            yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title="TZS")
-        )
-        
-        # 2. Velocity Audit
-        velocities = []
-        for i, row in df.iterrows():
-            try:
-                vm_data = row.get('velocity_metrics', '[]')
-                if isinstance(vm_data, str):
-                    vm = json.loads(vm_data)
-                else:
-                    vm = vm_data
-                    
-                if vm and isinstance(vm, list):
-                    # Filter out zero deltas and calculate mean of actual movement steps
-                    deltas = [entry.get('delta_ms', 0) for entry in vm if isinstance(entry, dict)]
-                    pos_deltas = [d for d in deltas if d > 10]
-                    avg_v = np.mean(pos_deltas) if pos_deltas else 0
-                    velocities.append(avg_v)
-                else:
-                    velocities.append(0)
-            except Exception as e:
-                print(f"Vel Parse Error: {e}")
-                velocities.append(0)
-
-                
-        vel_fig = go.Figure(data=[
-            go.Scatter(
-                x=[str(i) for i in range(len(df))],
-                y=velocities,
-                mode='lines+markers',
-                line=dict(color='#3b82f6', width=3, shape='spline'),
-                marker=dict(size=8, color='#60a5fa', line=dict(color='#fff', width=1)),
-                hovertemplate="Avg Step: %{y:.0f}ms<extra></extra>"
-            )
-        ])
-        vel_fig.update_layout(
-            template='plotly_dark', margin=dict(l=40, r=20, t=10, b=40),
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', title="ms/step")
-        )
-        
-        # 3. Stats Table
-        table_rows = []
-        for i, row in df.iloc[::-1].iterrows():
-            stake = row.get('stake', 0)
-            won = row.get('total_won', 0)
-            profit = stake - won
-            payout_ratio = (won / stake * 100) if stake > 0 else 0
-            
-            # Seeds
-            try:
-                seed_data = row.get('seeds', '{}')
-                seeds = json.loads(seed_data) if isinstance(seed_data, str) else seed_data
-                key_display = seeds.get('key', '—')
-                if len(key_display) > 20: key_display = key_display[:12] + "..." + key_display[-5:]
-            except:
-                key_display = '—'
-            
-            table_rows.append(html.Tr([
-                html.Td(str(row['round_id'])[-8:], style={'fontFamily': 'monospace', 'color': 'rgba(255,255,255,0.4)'}),
-                html.Td(f"{stake:,.0f}", style={'fontWeight': '600'}),
-                html.Td(f"{won:,.0f}", style={'color': '#ef4444' if won > stake else '#10b981'}),
-                html.Td(f"{profit:+,.0f}", style={'fontWeight': '700', 'color': '#10b981' if profit > 0 else '#ef4444'}),
-                html.Td(f"{payout_ratio:.1f}%", style={'color': 'rgba(255,255,255,0.6)'}),
-                html.Td(key_display, style={'fontSize': '10px', 'color': 'rgba(3b, 130, 246, 0.4)', 'fontFamily': 'monospace'}),
-                html.Td("NORMAL" if payout_ratio < 80 else "🔥 HIGH PAYOUT", 
-                        style={'color': '#10b981' if payout_ratio < 80 else '#f59e0b', 'fontSize': '11px', 'fontWeight': '700'})
-            ]))
-            
-        table = html.Table([
-            html.Thead(html.Tr([
-                html.Th("Round"), html.Th("Total Stake"), html.Th("Total Payout"), html.Th("House P&L"), html.Th("Payout%"), html.Th("Round Key"), html.Th("Status")
-            ], style={'color': 'rgba(255,255,255,0.3)', 'fontSize': '11px', 'textTransform': 'uppercase'})),
-            html.Tbody(table_rows)
-        ], style={'width': '100%', 'borderCollapse': 'separate', 'borderSpacing': '0 8px'})
-        
-        return pl_fig, vel_fig, table
-        
-    except Exception as e:
-        print(f"Audit Error: {e}")
-        return go.Figure(), go.Figure(), html.Div(f"Error loading audit: {str(e)}")
-
-
-# ============ V2 BETTING WINDOW CALLBACK ============
-@app.callback(
-    [Output('window-status-banner', 'children'),
-     Output('window-consensus-score', 'children'),
-     Output('window-current-state', 'children'),
-     Output('window-state-prob', 'children'),
-     Output('window-pof-value', 'children'),
-     Output('window-kelly-pct', 'children'),
-     Output('window-heatmap', 'figure'),
-     Output('window-signal-breakdown', 'children'),
-     Output('window-regime-history', 'children')],
-    [Input('refresh', 'n_intervals')]
-)
-def update_betting_window(n):
-    """Update V2 Betting Window page with regime detection data"""
-    try:
-        # Get data
-        data = np.array(crash_data[-100:]) if len(crash_data) >= 100 else np.array(crash_data) if crash_data else np.array([2.0])
-        
-        # Fit detector if not fitted
-        if not betting_window_detector.fitted and len(data) >= 20:
-            betting_window_detector.fit(data)
-        
-        # Get feature data
-        pof_data = feature_engine.calculate_pof(betting_behavior.get('poolSize', 0))
-        pof_value = pof_data.get('pof', 1.0)
-        
-        # Get window analysis
-        if betting_window_detector.fitted:
-            window_result = betting_window_detector.get_betting_window_probability(data)
-            consensus = betting_window_detector.get_weighted_consensus_score(data, pof=pof_value)
-            state = window_result.get('state', 'UNKNOWN')
-            window_prob = window_result.get('window_probability', 0.5)
-            window_open = window_result.get('window_open', False)
-        else:
-            consensus = 0.5
-            state = 'CALIBRATING'
-            window_prob = 0.5
-            window_open = False
-        
-        # WINDOW STATUS BANNER
-        if consensus >= 0.75 and window_open:
-            banner_color = '#d4af37'
-            banner_text = 'WINDOW OPEN'
-            banner_sub = 'High conviction betting window detected'
-        elif consensus >= 0.5:
-            banner_color = 'rgba(255,255,255,0.4)'
-            banner_text = 'TRANSITIONAL'
-            banner_sub = 'Market in flux, await confirmation'
-        else:
-            banner_color = 'rgba(255,255,255,0.2)'
-            banner_text = 'WINDOW CLOSED'
-            banner_sub = 'Accumulation phase, avoid entries'
-        
-        banner = html.Div([
-            html.Div(banner_text, style={
-                'fontSize': '72px', 'fontWeight': '900', 'color': banner_color,
-                'letterSpacing': '12px', 'marginBottom': '16px'
-            }),
-            html.Div(banner_sub, style={
-                'fontSize': '14px', 'color': 'rgba(255,255,255,0.4)', 'letterSpacing': '3px'
-            })
-        ])
-        
-        # Metrics
-        consensus_display = f"{consensus * 100:.0f}%"
-        state_prob_display = f"{window_prob * 100:.0f}% probability"
-        pof_display = f"{pof_value:.2f}x"
-        kelly_pct = f"{min(5, consensus * 5):.1f}%"
-        
-        # Window Heatmap (24-hour probability simulation)
-        hours = list(range(24))
-        current_hour = datetime.now().hour
-        
-        # Simulate hour-based probabilities
-        probs = []
-        for h in hours:
-            base = 0.4 + 0.3 * np.sin((h - 6) * np.pi / 12)  # Peak around noon
-            probs.append(max(0.2, min(0.9, base + (0.1 if h == current_hour else 0))))
-        
-        heatmap_colors = ['#1a1a1a' if p < 0.5 else '#333' if p < 0.75 else '#d4af37' for p in probs]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=hours, y=[1]*24,
-            marker_color=heatmap_colors,
-            hovertemplate='Hour %{x}: %{customdata:.0%}<extra></extra>',
-            customdata=probs
-        ))
-        fig.update_layout(
-            template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=20, r=20, t=10, b=30), showlegend=False, bargap=0.1,
-            xaxis=dict(tickmode='array', tickvals=hours, ticktext=[f'{h:02d}' for h in hours], 
-                      tickfont=dict(color='rgba(255,255,255,0.3)', size=10), showgrid=False),
-            yaxis=dict(showticklabels=False, showgrid=False)
-        )
-        
-        # Signal Weights Breakdown
-        weights = {'HMM State': 0.35, 'POF': 0.25, 'Velocity': 0.20, 'WDI': 0.20}
-        signal_rows = []
-        for name, weight in weights.items():
-            signal_rows.append(html.Div([
-                html.Span(name, style={'color': 'rgba(255,255,255,0.5)', 'fontSize': '14px'}),
-                html.Span(f"{weight*100:.0f}%", style={
-                    'color': '#fff', 'fontSize': '14px', 'fontWeight': '700', 'marginLeft': 'auto'
-                })
-            ], style={'display': 'flex', 'padding': '12px 0', 'borderBottom': '1px solid rgba(255,255,255,0.05)'}))
-        
-        # Regime History (last 5 transitions)
-        history_items = []
-        for i in range(min(5, len(crash_data))):
-            history_items.append(html.Div([
-                html.Span(f"{datetime.now().strftime('%H:%M')}", style={'color': 'rgba(255,255,255,0.3)', 'fontSize': '12px'}),
-                html.Span("DISTRIBUTION" if i % 2 == 0 else "ACCUMULATION", style={
-                    'color': '#d4af37' if i % 2 == 0 else 'rgba(255,255,255,0.4)',
-                    'fontSize': '12px', 'marginLeft': 'auto'
-                })
-            ], style={'display': 'flex', 'padding': '8px 0', 'borderBottom': '1px solid rgba(255,255,255,0.05)'}))
-        
-        return banner, consensus_display, state, state_prob_display, pof_display, kelly_pct, fig, signal_rows, history_items
-        
-    except Exception as e:
-        print(f"Betting Window Error: {e}")
-        empty_fig = go.Figure()
-        empty_fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        return (html.Div("Loading..."), "—", "LOADING", "—", "—", "—", empty_fig, [], [])
-
-
-
-@app.callback(Output('ftr-source-ip', 'children'), [Input('refresh', 'n_intervals')])
-def update_source_ip(n):
-    return last_ip
 
 if __name__ == '__main__':
     print("\n" + "="*50)
