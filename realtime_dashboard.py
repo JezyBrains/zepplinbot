@@ -1270,7 +1270,7 @@ def create_timing_page():
 
 app.layout = html.Div([
     dcc.Location(id='url'),
-    dcc.Interval(id='refresh', interval=3000),
+    dcc.Interval(id='refresh', interval=5000),  # 5s interval to reduce server load
     dcc.Store(id='language-store', data='en'),
     
     # Root Flex Container

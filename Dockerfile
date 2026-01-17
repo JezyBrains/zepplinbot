@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 # AGGRESSIVE cache buster - completely different value each time
-ARG CACHEBUST=LATENCY_TRACK_V1
+ARG CACHEBUST=GEVENT_FIX_V1
 RUN echo "===================" && echo "BUILD: $CACHEBUST" && date && echo "==================="
 COPY . .
 
@@ -25,5 +25,5 @@ EXPOSE 8050
 # Environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Run the application with Gunicorn - optimized for stability
-CMD ["gunicorn", "--bind", "0.0.0.0:8050", "--workers", "2", "--threads", "4", "--timeout", "300", "--keep-alive", "5", "--graceful-timeout", "120", "realtime_dashboard:server"]
+# Run with Gunicorn using gevent for async handling
+CMD ["gunicorn", "--bind", "0.0.0.0:8050", "--worker-class", "gevent", "--workers", "4", "--timeout", "300", "--keep-alive", "30", "realtime_dashboard:server"]
