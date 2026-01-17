@@ -251,8 +251,7 @@ load_data()
 # ============ APP ============
 external_stylesheets = [
     'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=swap',
-    dbc.themes.BOOTSTRAP,
-    '/assets/tactical_os.css'
+    dbc.themes.BOOTSTRAP
 ]
 app = dash.Dash(__name__, title='Zeppelin Tactical OS', 
                 external_stylesheets=external_stylesheets,
