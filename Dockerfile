@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 # Cache buster - forces fresh copy of source files
-ARG CACHEBUST=SRC_VERIFIED_V1
+ARG CACHEBUST=MKDIR_FIX_V2
 RUN echo "Build ID: $CACHEBUST" && date
 COPY . .
 

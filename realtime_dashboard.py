@@ -44,6 +44,10 @@ except ImportError:
 
 
 # ============ DATA ============
+# Ensure data directory exists BEFORE any file operations
+os.makedirs('data', exist_ok=True)
+os.makedirs('models', exist_ok=True)
+
 crash_data = []
 bankroll = 100000.0
 DATA_FILE = 'data/crash_data.csv'
