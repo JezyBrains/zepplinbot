@@ -332,3 +332,17 @@ For issues or questions:
 ---
 
 **Happy Predicting! 🚀**
+
+---
+
+## 🚀 Release Notes v4.0.1 (Tactical OS Deployment)
+
+### 🛠️ Critical Deployment Fixes
+- **Dependency Fix**: Added `python-dotenv` to `requirements.txt` to resolve 502 Bad Gateway errors on Dokploy/production servers.
+- **Port Standardization**: Dockerfile now explicitly exposes port `8050`. Ensure your container orchestration maps this internal port correctly.
+- **Layout Stabilization**: Fixed global horizontal scroll issues. Sidebar is now correctly pinned, and only the **History Strip** scrolls.
+
+### ✨ New Features
+- **Tactical OS V4**: Complete UI overhaul with "Glassmorphism" design and real-time telemetry.
+- **Swahili Localization**: Full `SW` language support for all dashboard modules.
+- **Live Crash History**: "NEW" badge indicator for the most recent round, with real-time left-side injection.
