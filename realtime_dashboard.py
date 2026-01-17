@@ -1285,20 +1285,20 @@ app.layout = html.Div([
             # GLOBAL FOOTER BAR (Pinned)
             html.Div([
                 html.Div([
+                    html.Span("SRC: ", style={'color': '#ffc107', 'fontWeight': 'bold'}),
+                    html.Span(id="ftr-source-ip", children="...", className="cyan")
+                ], style={'marginRight': '16px'}),
+                html.Div([
                     html.Span("TARGET: ", id="lbl-target", style={'color': 'rgba(255,255,255,0.3)'}),
                     html.Span(id="ftr-target", children="2.0x", className="cyan")
-                ], style={'marginRight': '24px'}),
+                ], style={'marginRight': '16px'}),
                 html.Div([
                     html.Span("CONSENSUS: ", id="lbl-consensus", style={'color': 'rgba(255,255,255,0.3)'}),
                     html.Span(id="ftr-consensus", children="75%", className="cyan")
-                ], style={'marginRight': '24px'}),
+                ], style={'marginRight': '16px'}),
                 html.Div([
-                    html.Span("SHA VERIFIED: ", style={'color': 'rgba(255,255,255,0.3)'}),
-                    html.Span("YES", className="cyan")
-                ]),
-                html.Div([
-                    html.Span("DATA SOURCE: ", style={'color': '#ffc107', 'fontWeight': 'bold', 'marginLeft': '24px'}),
-                    html.Span(id="ftr-source-ip", children="WAITING...", className="cyan")
+                    html.Span("SHA: ", style={'color': 'rgba(255,255,255,0.3)'}),
+                    html.Span("OK", className="cyan")
                 ]),
                 html.Div(id="ftr-time", className="mono", style={'flex': 1, 'textAlign': 'right', 'fontSize': '10px', 'color': 'rgba(255,255,255,0.3)'})
             ], style={

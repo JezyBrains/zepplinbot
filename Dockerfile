@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 # Cache buster - forces fresh copy of source files
-ARG CACHEBUST=2026011720290002
+ARG CACHEBUST=2026011720300003
 RUN echo "Cache bust: $CACHEBUST"
 COPY . .
 
