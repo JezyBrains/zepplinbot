@@ -404,6 +404,13 @@ def api_betting_behavior():
         
         data = request.get_json()
         
+        # LATENCY TRACKING: Calculate delay from extension to server
+        ext_timestamp = data.get('timestamp', 0)
+        if ext_timestamp:
+            server_time = int(time.time() * 1000)  # Current server time in ms
+            latency_ms = server_time - ext_timestamp
+            print(f"📡 LATENCY: {latency_ms}ms (Ext→Server) | Bettors: {data.get('totalBettors', 0)}")
+        
         # Update live stats
         betting_behavior['totalBettors'] = data.get('totalBettors', 0)
         betting_behavior['totalStaked'] = data.get('totalStaked', 0)
