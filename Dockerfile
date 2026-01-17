@@ -14,8 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-# Cache buster - change this value to force rebuild
-ARG CACHEBUST=2026011720250001
+# Cache buster - forces fresh copy of source files
+ARG CACHEBUST=2026011720290002
+RUN echo "Cache bust: $CACHEBUST"
 COPY . .
 
 # Expose port
