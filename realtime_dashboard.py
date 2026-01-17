@@ -677,17 +677,17 @@ def create_dashboard():
 
         ], className="hud-grid"),
 
+
         # Hidden elements for state tracking
         html.Div(id="bet-online", style={'display': 'none'}),
         html.Div(id="last-crash", style={'display': 'none'}),
         html.Div(id="last-update", style={'display': 'none'}),
-        html.Div(id="stat-winrate", style={'display': 'none'}),
+        # stat-winrate and bet-balance are already present in HUD modules
         html.Div(id="stat-regime", style={'display': 'none'}),
         html.Div(id="stat-volatility", style={'display': 'none'}),
         html.Div(id="last-5-rounds", style={'display': 'none'}),
         html.Div(id="current-round", style={'display': 'none'}),
         html.Div(id="bet-livecoef", style={'display': 'none'}),
-        html.Div(id="bet-balance", style={'display': 'none'}),
         
     ], style={'display': 'flex', 'flexDirection': 'column', 'flex': 1})
 
