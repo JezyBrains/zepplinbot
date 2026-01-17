@@ -1297,7 +1297,7 @@ app.layout = html.Div([
                     html.Span("YES", className="cyan")
                 ]),
                 html.Div([
-                    html.Span("DATA SOURCE: ", style={'color': 'rgba(255,255,255,0.3)', 'marginLeft': '24px'}),
+                    html.Span("DATA SOURCE: ", style={'color': '#ffc107', 'fontWeight': 'bold', 'marginLeft': '24px'}),
                     html.Span(id="ftr-source-ip", children="WAITING...", className="cyan")
                 ]),
                 html.Div(id="ftr-time", className="mono", style={'flex': 1, 'textAlign': 'right', 'fontSize': '10px', 'color': 'rgba(255,255,255,0.3)'})
