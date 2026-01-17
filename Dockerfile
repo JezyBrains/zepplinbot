@@ -14,9 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-# Cache buster - forces fresh copy of source files
-ARG CACHEBUST=REALTIME_V2_IP
-RUN echo "Build ID: $CACHEBUST" && date
+# AGGRESSIVE cache buster - completely different value each time
+ARG CACHEBUST=NOCACHE_1768672901
+RUN echo "===================" && echo "BUILD: $CACHEBUST" && date && echo "==================="
 COPY . .
 
 # Expose port
