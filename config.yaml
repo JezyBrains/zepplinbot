@@ -1,0 +1,61 @@
+website:
+  url: "https://zeppelin-tz.betsolutions.com/?sessionId=f1a5dbea-1b31-49e6-96cf-1e9592e3358c&Lang=en-US&MerchantId=40001&IsFreeplay=False&platform=desktop&gameId=7001&flags=undefined"
+  selector: ".number, .result, .outcome, [class*='result'], [class*='number']"
+  data_type: "number"
+  update_interval: 3600
+  secured: true
+  requires_browser: true
+
+scraping:
+  method: "selenium"
+  timeout: 30
+  retry_attempts: 3
+  wait_time: 10
+  headless: false
+  manual_verification_time: 30
+  headers:
+    User-Agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+prediction:
+  models:
+    - lstm
+    - prophet
+    - arima
+    - xgboost
+    - ensemble
+  
+  sequence_length: 50
+  train_test_split: 0.8
+  validation_split: 0.2
+  
+  lstm:
+    units: [128, 64, 32]
+    dropout: 0.2
+    epochs: 100
+    batch_size: 32
+    learning_rate: 0.001
+  
+  prophet:
+    changepoint_prior_scale: 0.05
+    seasonality_mode: "multiplicative"
+  
+  arima:
+    auto_order: true
+    max_p: 5
+    max_d: 2
+    max_q: 5
+  
+  xgboost:
+    n_estimators: 1000
+    max_depth: 7
+    learning_rate: 0.01
+    
+  ensemble:
+    weights: "auto"
+    method: "weighted_average"
+
+output:
+  save_predictions: true
+  save_models: true
+  generate_plots: true
+  confidence_interval: 0.95
