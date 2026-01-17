@@ -272,10 +272,16 @@ def cors(r):
     r.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return r
 
+
+# Track data source
+last_ip = "WAITING..."
+
 @server.route('/api/crash', methods=['POST', 'OPTIONS'])
 def api_crash():
+    global last_ip
     if request.method == 'OPTIONS': return '', 200
     try:
+        last_ip = request.remote_addr
         v = float(request.get_json().get('value', 0))
         if v >= 1.0 and v not in crash_data[-5:]:
             crash_data.append(v)
@@ -1289,6 +1295,9 @@ app.layout = html.Div([
                 html.Div([
                     html.Span("SHA VERIFIED: ", style={'color': 'rgba(255,255,255,0.3)'}),
                     html.Span("YES", className="cyan")
+                html.Div([
+                    html.Span("DATA SOURCE: ", style={'color': 'rgba(255,255,255,0.3)', 'marginLeft': '24px'}),
+                    html.Span(id="ftr-source-ip", children="WAITING...", className="cyan")
                 ]),
                 html.Div(id="ftr-time", className="mono", style={'flex': 1, 'textAlign': 'right', 'fontSize': '10px', 'color': 'rgba(255,255,255,0.3)'})
             ], style={
@@ -2257,6 +2266,10 @@ def update_betting_window(n):
         return (html.Div("Loading..."), "—", "LOADING", "—", "—", "—", empty_fig, [], [])
 
 
+
+@app.callback(Output('ftr-source-ip', 'children'), [Input('refresh', 'n_intervals')])
+def update_source_ip(n):
+    return last_ip
 
 if __name__ == '__main__':
     print("\n" + "="*50)

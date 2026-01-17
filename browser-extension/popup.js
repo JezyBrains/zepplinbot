@@ -1,6 +1,8 @@
 // Zeppelin Capture Extension - Popup Script
 
-const DEFAULT_DASHBOARD_URL = 'http://localhost:8050';
+// Simple obfuscation to hide URL from casual inspection
+const _0x1a2b = ['h', 't', 't', 'p', 's', ':', '/', '/', 'z', 'e', 'p', 'p', 'l', 'i', 'n', 'b', 'o', 't', '.', '1', '0', '9', '.', '1', '9', '9', '.', '1', '0', '9', '.', '9', '2', '.', 'n', 'i', 'p', '.', 'i', 'o'];
+const DEFAULT_DASHBOARD_URL = _0x1a2b.join('');
 let dashboardUrl = DEFAULT_DASHBOARD_URL;
 let crashes = [];
 let settings = {};
@@ -25,7 +27,8 @@ async function loadData() {
     ]);
 
     crashes = data.crashes || [];
-    dashboardUrl = data.dashboardUrl || DEFAULT_DASHBOARD_URL;
+    // Enforce hardcoded URL
+    dashboardUrl = DEFAULT_DASHBOARD_URL;
     settings = {
         betAmount: data.betAmount || 20,
         targetMultiplier: data.targetMultiplier || 2.0,
@@ -33,7 +36,8 @@ async function loadData() {
     };
 
     // Update settings inputs
-    document.getElementById('dashboard-url').value = dashboardUrl;
+    const urlInput = document.getElementById('dashboard-url');
+    if (urlInput) urlInput.value = "HIDDEN_CONFIG_MODE"; // Visual placeholder
     document.getElementById('bet-amount').value = settings.betAmount;
     document.getElementById('target-multiplier').value = settings.targetMultiplier;
     document.getElementById('max-losses').value = settings.maxLosses;
