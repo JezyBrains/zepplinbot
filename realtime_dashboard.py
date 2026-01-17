@@ -11,6 +11,19 @@ import os
 import sys
 import json
 import requests
+import time
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+# Import V2 modules at top level to avoid callback lag
+try:
+    from feature_engineering import feature_engine
+    from regime_detector import betting_window_detector
+except ImportError:
+    # Handle the case where src is not in path yet
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+    from feature_engineering import feature_engine
+    from regime_detector import betting_window_detector
+
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -255,7 +268,11 @@ def get_temporal_insights(timeframe='all'):
 
 
 # REAL-TIME MODE: Don't load historical data - only use incoming live data
+# apply to the server (flask app)
+server.wsgi_app = ProxyFix(server.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 # load_data()
+
 print("🔴 REAL-TIME MODE: Waiting for live data from extension...")
 
 # ============ APP ============
@@ -287,10 +304,8 @@ def api_crash():
     global last_ip
     if request.method == 'OPTIONS': return '', 200
     try:
-        # Get real IP (behind reverse proxy like Traefik)
-        last_ip = request.headers.get('X-Forwarded-For', request.headers.get('X-Real-IP', request.remote_addr))
-        if ',' in last_ip:
-            last_ip = last_ip.split(',')[0].strip()  # First IP in chain is the original
+        # ProxyFix handles X-Forwarded-For automatically
+        last_ip = request.remote_addr
         v = float(request.get_json().get('value', 0))
         if v >= 1.0 and v not in crash_data[-5:]:
             crash_data.append(v)
@@ -396,10 +411,8 @@ def api_betting_behavior():
     global betting_behavior, last_ip
     if request.method == 'OPTIONS': return '', 200
     try:
-        # Capture real IP from any data source
-        real_ip = request.headers.get('X-Forwarded-For', request.headers.get('X-Real-IP', request.remote_addr))
-        if ',' in real_ip:
-            real_ip = real_ip.split(',')[0].strip()
+        # ProxyFix handles X-Forwarded-For automatically
+        real_ip = request.remote_addr
         last_ip = real_ip
         
         data = request.get_json()
@@ -2172,13 +2185,6 @@ def update_audit_data(n):
 def update_betting_window(n):
     """Update V2 Betting Window page with regime detection data"""
     try:
-        # Import V2 modules
-        import sys
-        sys.path.insert(0, 'src')
-        
-        from feature_engineering import feature_engine
-        from regime_detector import betting_window_detector
-        
         # Get data
         data = np.array(crash_data[-100:]) if len(crash_data) >= 100 else np.array(crash_data) if crash_data else np.array([2.0])
         
