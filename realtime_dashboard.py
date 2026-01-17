@@ -26,11 +26,15 @@ except ImportError:
     exit(1)
 
 # Import advanced predictor
-try:
-    from src.advanced_predictor import get_advanced_signal, predictor
-    ADVANCED_PREDICTOR = True
-except:
+if os.getenv('DISABLE_ADVANCED_PREDICTOR') == 'true':
     ADVANCED_PREDICTOR = False
+    print("⚠️ Advanced Predictor DISABLED via Environment Variable")
+else:
+    try:
+        from src.advanced_predictor import get_advanced_signal, predictor
+        ADVANCED_PREDICTOR = True
+    except:
+        ADVANCED_PREDICTOR = False
 
 # Import translations
 try:
@@ -1398,93 +1402,103 @@ def update_telemetry(n):
     prevent_initial_call=True
 )
 def update_hud(n, lang):
-    if n is None: return dash.no_update
-    load_data()
-    sig = get_signal()
-    
-    # Get translations
-    l = lang if lang in TRANSLATIONS else 'en'
-    t = TRANSLATIONS[l]
-    
-    signal = sig.get('signal', 'WAIT')
-    consensus = sig.get('consensus_score', 0) * 100
-    
-    # Narrative Logic
-    if signal == 'BET':
-        narrative = t['narrative_bet']
-    elif signal == 'SKIP':
-        narrative = t['narrative_skip']
-    else:
-        narrative = t['narrative_wait']
+    try:
+        if n is None: return dash.no_update
+        load_data()
+        sig = get_signal()
         
-    # Override for Danger
-    pool_size = betting_behavior.get('poolSize', 0)
-    pof = pool_size / 50000 if pool_size > 0 else 1.0
-    if pof > 2.0:
-        narrative = t['narrative_danger']
-
-    # 1. Command Readout logic
-    bet_amount = sig.get('bet', 0)
-    info = f"TZS {bet_amount:,.0f}" if bet_amount > 0 else "TZS 0"
-    
-    # 2. Consensus & Target
-    target = f"{sig.get('target', 2.0)}x"
-    consensus_pct = f"{consensus:.0f}%"
-    
-    # 4. Intelligence Metrics
-    pof_display = f"{pof:.1f}x"
-    mv_display = "NORMAL" if pof < 1.5 else "FAST" if pof < 2.0 else "SPIKE"
-
-    # NEW: Model Health Badges
-    analysis = sig.get('analysis', {})
-    health_badges = []
-    # Core models to check
-    core_models = ['trend', 'pattern', 'volatility', 'regime', 'statistical', 'behavioral', 'ml', 'temporal']
-    for m in core_models:
-        is_active = m in analysis and analysis[m] is not None
-        status_color = '#10b981' if is_active else 'rgba(255,255,255,0.2)'
-        health_badges.append(html.Div([
-            html.Span("●", style={'color': status_color, 'fontSize': '8px', 'marginRight': '4px'}),
-            html.Span(m.upper(), style={'fontSize': '9px', 'color': 'rgba(255,255,255,0.5)'})
-        ], style={'background': 'rgba(255,255,255,0.05)', 'padding': '2px 6px', 'borderRadius': '4px'}))
-    
-    # 5. Terminal Log (Logic Scoreboard)
-    scoreboard = []
-    timestamp = datetime.now().strftime('%H:%M:%S')
-    for name, res in analysis.items():
-        if not res: continue
-        res_color = 'var(--kinetic-cyan)' if res.get('signal') == 'BET' else 'var(--impact-red)' if res.get('signal') == 'SKIP' else 'rgba(255,255,255,0.3)'
-        scoreboard.append(html.Div([
-            html.Span(f"[{timestamp}] ", style={'color': 'rgba(255,255,255,0.2)'}),
-            html.Span(f"{name.upper()}: ", style={'color': 'rgba(255,255,255,0.5)'}),
-            html.Span(res.get('signal', 'WAIT'), style={'color': res_color, 'fontWeight': '700'})
-        ], style={'padding': '2px 0', 'borderBottom': '1px solid rgba(255,255,255,0.02)'}))
-    
-    # 6. Session Stats
-    winrate = f"{sig.get('prob', 0):.0f}%"
-    b = betting_behavior
-    balance = b.get('balance', 0)
-    session_profit = f"TZS {balance:,.0f}" if balance > 0 else "TZS 0"
-    
-    # 7. History Strip - Show ALL crashes (scrollable)
-    history_elements = []
-    for i, val in enumerate(reversed(crash_data[-100:])):  # Show last 100 for performance
-        is_latest = i == 0
-        cls = "history-badge badge-cyan" if val >= 2.0 else "history-badge badge-red"
-        if is_latest:
-            # Special CSS class handles the highlight and thicker border
-            history_elements.append(html.Div([
-                html.Span("NEW", style={'fontSize': '8px', 'fontWeight': '900', 'marginRight': '4px', 'opacity': '0.7'}),
-                html.Span(f"{val:.2f}x")
-            ], className=f"{cls} badge-latest"))
+        # Get translations
+        l = lang if lang in TRANSLATIONS else 'en'
+        t = TRANSLATIONS[l]
+        
+        signal = sig.get('signal', 'WAIT')
+        consensus = sig.get('consensus_score', 0) * 100
+        
+        # Narrative Logic
+        if signal == 'BET':
+            narrative = t['narrative_bet']
+        elif signal == 'SKIP':
+            narrative = t['narrative_skip']
         else:
-            history_elements.append(html.Div(f"{val:.2f}x", className=cls))
+            narrative = t['narrative_wait']
+            
+        # Override for Danger
+        pool_size = betting_behavior.get('poolSize', 0)
+        pof = pool_size / 50000 if pool_size > 0 else 1.0
+        if pof > 2.0:
+            narrative = t['narrative_danger']
 
-    return (
-        signal, info, consensus_pct, target, 
-        pof_display, mv_display, health_badges, scoreboard, narrative,
-        winrate, session_profit, str(len(crash_data)), history_elements
-    )
+        # 1. Command Readout logic
+        bet_amount = sig.get('bet', 0)
+        info = f"TZS {bet_amount:,.0f}" if bet_amount > 0 else "TZS 0"
+        
+        # 2. Consensus & Target
+        target = f"{sig.get('target', 2.0)}x"
+        consensus_pct = f"{consensus:.0f}%"
+        
+        # 4. Intelligence Metrics
+        pof_display = f"{pof:.1f}x"
+        mv_display = "NORMAL" if pof < 1.5 else "FAST" if pof < 2.0 else "SPIKE"
+
+        # NEW: Model Health Badges
+        analysis = sig.get('analysis', {})
+        health_badges = []
+        # Core models to check
+        core_models = ['trend', 'pattern', 'volatility', 'regime', 'statistical', 'behavioral', 'ml', 'temporal']
+        for m in core_models:
+            is_active = m in analysis and analysis[m] is not None
+            status_color = '#10b981' if is_active else 'rgba(255,255,255,0.2)'
+            health_badges.append(html.Div([
+                html.Span("●", style={'color': status_color, 'fontSize': '8px', 'marginRight': '4px'}),
+                html.Span(m.upper(), style={'fontSize': '9px', 'color': 'rgba(255,255,255,0.5)'})
+            ], style={'background': 'rgba(255,255,255,0.05)', 'padding': '2px 6px', 'borderRadius': '4px'}))
+        
+        # 5. Terminal Log (Logic Scoreboard)
+        scoreboard = []
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        for name, res in analysis.items():
+            if not res: continue
+            res_color = 'var(--kinetic-cyan)' if res.get('signal') == 'BET' else 'var(--impact-red)' if res.get('signal') == 'SKIP' else 'rgba(255,255,255,0.3)'
+            scoreboard.append(html.Div([
+                html.Span(f"[{timestamp}] ", style={'color': 'rgba(255,255,255,0.2)'}),
+                html.Span(f"{name.upper()}: ", style={'color': 'rgba(255,255,255,0.5)'}),
+                html.Span(res.get('signal', 'WAIT'), style={'color': res_color, 'fontWeight': '700'})
+            ], style={'padding': '2px 0', 'borderBottom': '1px solid rgba(255,255,255,0.02)'}))
+        
+        # 6. Session Stats
+        winrate = f"{sig.get('prob', 0):.0f}%"
+        b = betting_behavior
+        balance = b.get('balance', 0)
+        session_profit = f"TZS {balance:,.0f}" if balance > 0 else "TZS 0"
+        
+        # 7. History Strip - Show ALL crashes (scrollable)
+        history_elements = []
+        for i, val in enumerate(reversed(crash_data[-100:])):  # Show last 100 for performance
+            is_latest = i == 0
+            cls = "history-badge badge-cyan" if val >= 2.0 else "history-badge badge-red"
+            if is_latest:
+                # Special CSS class handles the highlight and thicker border
+                history_elements.append(html.Div([
+                    html.Span("NEW", style={'fontSize': '8px', 'fontWeight': '900', 'marginRight': '4px', 'opacity': '0.7'}),
+                    html.Span(f"{val:.2f}x")
+                ], className=f"{cls} badge-latest"))
+            else:
+                history_elements.append(html.Div(f"{val:.2f}x", className=cls))
+
+        return (
+            signal, info, consensus_pct, target, 
+            pof_display, mv_display, health_badges, scoreboard, narrative,
+            winrate, session_profit, str(len(crash_data)), history_elements
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        # Return fallback values to prevent UI freeze
+        return (
+            "ERROR", "Err", "0%", "1.0x", 
+            "1.0x", "ERR", [], [], "System Error", 
+            "0%", "TZS 0", "0", []
+        )
 
 @app.callback(Output('whale-chart', 'figure'), [Input('refresh', 'n_intervals')], prevent_initial_call=True)
 def update_whale_chart(n):
