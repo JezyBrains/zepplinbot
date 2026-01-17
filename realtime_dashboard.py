@@ -577,6 +577,8 @@ def create_sidebar():
                      style={'display': 'block', 'padding': '8px 0', 'color': 'rgba(255,255,255,0.4)', 'fontSize': '13px'}),
             dcc.Link("Audit", href="/audit", className="nav-link", id="link-audit",
                      style={'display': 'block', 'padding': '8px 0', 'color': 'rgba(255,255,255,0.4)', 'fontSize': '13px'}),
+            dcc.Link("Live Bot", href="/live-view", className="nav-link", id="link-vnc",
+                     style={'display': 'block', 'padding': '8px 0', 'color': 'rgba(212, 175, 55, 0.6)', 'fontSize': '13px', 'fontWeight': 'bold'}),
         ], style={'flex': 1}),
 
         # Status
@@ -1397,6 +1399,28 @@ def update_betting_window_logic():
 
 # ============ CALLBACKS ============
 
+def create_vnc_page():
+    vnc_url = os.getenv('VNC_URL', 'http://localhost:7900')
+    return html.Div([
+        html.Div([
+            html.H1("Tactical Control", style={'fontSize': '32px', 'fontWeight': '800', 'margin': 0, 'color': '#d4af37'}),
+            html.Div("監視 | Live Bot Monitor & Automation Oversight", style={'color': 'rgba(255,255,255,0.4)', 'fontSize': '14px', 'marginTop': '4px'})
+        ], style={'marginBottom': '20px', 'padding': '20px'}),
+        
+        html.Div([
+            html.Iframe(
+                src=vnc_url,
+                style={
+                    'width': '100%', 
+                    'height': 'calc(100vh - 250px)', 
+                    'border': '1px solid rgba(212, 175, 55, 0.2)',
+                    'borderRadius': '8px',
+                    'background': '#000'
+                }
+            )
+        ], style={'padding': '0 20px 20px 20px', 'flex': 1, 'display': 'flex'})
+    ], style={'display': 'flex', 'flexDirection': 'column', 'height': '100%'})
+
 @app.callback(Output('page-content', 'children'), [Input('url', 'pathname')])
 def route(path):
     if path == '/charts': return create_charts_page()
@@ -1406,6 +1430,7 @@ def route(path):
     if path == '/audit': return create_audit_page()
     if path == '/history': return create_history_page()
     if path == '/timing': return create_timing_page()
+    if path == '/live-view': return create_vnc_page()
     return create_dashboard()
 
 
