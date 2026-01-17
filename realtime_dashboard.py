@@ -1525,11 +1525,13 @@ def update_hud(n, lang):
             "0%", "TZS 0", "0", []
         )
 
-@app.callback(Output('whale-chart', 'figure'), [Input('refresh', 'n_intervals')], prevent_initial_call=True)
+@app.callback(Output('whale-chart', 'figure'), [Input('refresh', 'n_intervals')])
 def update_whale_chart(n):
     """Whale Radar - Polar chart showing proportional stake distribution by player group"""
     # 1. Fetch real active bets from global state
     active_bets = betting_behavior.get('activeBets', [])
+    if active_bets:
+        print(f"🐋 Whale: {len(active_bets)} bets")
     
     # 2. Define buckets (TZS)
     buckets = {

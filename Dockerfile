@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
 # AGGRESSIVE cache buster - completely different value each time
-ARG CACHEBUST=FIX502_1768676600
+ARG CACHEBUST=WHALE_FIX_1768677000
 RUN echo "===================" && echo "BUILD: $CACHEBUST" && date && echo "==================="
 COPY . .
 
