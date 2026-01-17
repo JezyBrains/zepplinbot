@@ -1295,6 +1295,7 @@ app.layout = html.Div([
                 html.Div([
                     html.Span("SHA VERIFIED: ", style={'color': 'rgba(255,255,255,0.3)'}),
                     html.Span("YES", className="cyan")
+                ]),
                 html.Div([
                     html.Span("DATA SOURCE: ", style={'color': 'rgba(255,255,255,0.3)', 'marginLeft': '24px'}),
                     html.Span(id="ftr-source-ip", children="WAITING...", className="cyan")
