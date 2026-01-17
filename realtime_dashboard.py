@@ -254,7 +254,9 @@ def get_temporal_insights(timeframe='all'):
     return insights
 
 
-load_data()
+# REAL-TIME MODE: Don't load historical data - only use incoming live data
+# load_data()
+print("🔴 REAL-TIME MODE: Waiting for live data from extension...")
 
 # ============ APP ============
 external_stylesheets = [
@@ -285,7 +287,10 @@ def api_crash():
     global last_ip
     if request.method == 'OPTIONS': return '', 200
     try:
-        last_ip = request.remote_addr
+        # Get real IP (behind reverse proxy like Traefik)
+        last_ip = request.headers.get('X-Forwarded-For', request.headers.get('X-Real-IP', request.remote_addr))
+        if ',' in last_ip:
+            last_ip = last_ip.split(',')[0].strip()  # First IP in chain is the original
         v = float(request.get_json().get('value', 0))
         if v >= 1.0 and v not in crash_data[-5:]:
             crash_data.append(v)
@@ -297,7 +302,7 @@ def api_crash():
 
 @server.route('/api/signal')
 def api_signal():
-    load_data()
+    # Real-time mode: use current crash_data, don't reload from CSV
     return jsonify(get_signal())
 
 @server.route('/api/round-data', methods=['POST', 'OPTIONS'])
@@ -1332,7 +1337,7 @@ def route(path):
 
 @app.callback(Output('sidebar-crashes', 'children'), [Input('refresh', 'n_intervals')])
 def update_sidebar(n):
-    load_data()
+    # Real-time mode: use current crash_data only
     return str(len(crash_data))
 
 @app.callback(
@@ -1349,7 +1354,7 @@ def update_sidebar(n):
 )
 def update_telemetry(n):
     if n is None: return dash.no_update
-    load_data()
+    # Real-time mode: no historical reload
     sig = get_signal()
     
     # 1. Global Header Telemetry
@@ -1418,7 +1423,7 @@ def update_telemetry(n):
 def update_hud(n, lang):
     try:
         if n is None: return dash.no_update
-        load_data()
+        # Real-time mode only
         sig = get_signal()
         
         # Get translations
@@ -1739,7 +1744,7 @@ def update_prob(n):
 @app.callback([Output('h-total', 'children'), Output('h-avg', 'children'), Output('h-max', 'children'), 
                Output('h-min', 'children'), Output('history-grid', 'children')], [Input('refresh', 'n_intervals')])
 def update_history(n):
-    load_data()
+    # Real-time mode: use only session data
     if not crash_data: return "0", "—", "—", "—", []
     data = np.array(crash_data)
     
