@@ -2,19 +2,36 @@ version: '3.8'
 
 services:
   dashboard:
-    build: .
-    container_name: zeppelin_tactical_os
+    build:
+      context: .
+      args:
+        - CACHEBUST=MASTER_CALLBACK_STABILIZATION_V2
     ports:
       - "8050:8050"
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-    restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
-    # Healthcheck to ensure server is up
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8050/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    networks:
+      - zeppelin-net
+
+  chrome-bot:
+    build:
+      context: .
+      dockerfile: chrome-docker/Dockerfile
+    ports:
+      - "4444:4444"
+      - "7900:7900" # VNC Port for viewing
+    environment:
+      - SE_EVENT_BUS_HOST=chrome-bot
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - DASHBOARD_URL=http://dashboard:8050
+      - PLAYER_USERNAME=${PLAYER_USERNAME}
+      - PLAYER_PASSWORD=${PLAYER_PASSWORD}
+    depends_on:
+      - dashboard
+    networks:
+      - zeppelin-net
+
+networks:
+  zeppelin-net:
+    driver: bridge

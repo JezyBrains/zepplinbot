@@ -6,13 +6,14 @@ Stunning glassmorphism design with advanced visualizations
 
 import numpy as np
 import pandas as pd
-from datetime import datetime
+import datetime
 import os
 import sys
 import json
 import requests
 import time
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_socketio import SocketIO, emit
 
 # Import V2 modules at top level to avoid callback lag
 try:
@@ -283,14 +284,26 @@ external_stylesheets = [
     'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=swap',
     dbc.themes.BOOTSTRAP
 ]
-app = dash.Dash(__name__, title='Zeppelin Tactical OS', 
-                external_stylesheets=external_stylesheets,
-                suppress_callback_exceptions=True)
-
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG, 'https://use.fontawesome.com/releases/v5.15.4/css/all.css'], suppress_callback_exceptions=True)
 server = app.server
+socketio = SocketIO(server, cors_allowed_origins="*", async_mode='gevent')
 
-# CORS & API
-from flask import request, jsonify
+@socketio.on('connect')
+def handle_connect():
+    print(f"📡 Client connected: {datetime.datetime.now()}")
+    emit('status', {'data': 'Connected to Zeppelin WebSocket'})
+
+@socketio.on('crash_report')
+def handle_crash_report(data):
+    val = data.get('value')
+    if val:
+        print(f"🎯 Real-time Crash Received via Socket: {val}x")
+        if val not in crash_data:
+            crash_data.append(float(val))
+            save_data()
+            socketio.emit('new_crash_ack', {'status': 'saved', 'value': val})
+
+server.wsgi_app = ProxyFix(server.wsgi_app, x_for=2)
 
 @server.after_request
 def cors(r):
@@ -1504,6 +1517,16 @@ def update_master(n, lang, tf):
         consensus = sig.get('consensus_score', 0) * 100
         analysis = sig.get('analysis', {})
         
+        # Broadcast signal to WebSockets for zero-delay extension sync
+        try:
+            socketio.emit('signal_update', {
+                'signal': signal,
+                'target': sig.get('target', 2.0),
+                'prob': sig.get('prob', 0),
+                'bet': sig.get('bet', 0)
+            })
+        except: pass
+
         # --- 1. SIDEBAR ---
         crashes_count = str(len(crash_data))
         
@@ -1733,9 +1756,9 @@ def update_master(n, lang, tf):
 
 if __name__ == '__main__':
     print("\n" + "="*50)
-    print("🚀 ZEPPELIN PRO DASHBOARD")
+    print("🚀 ZEPPELIN PRO DASHBOARD (WebSocket Enabled)")
     print("="*50)
     print(f"\n✅ Advanced Predictor: {'Loaded' if ADVANCED_PREDICTOR else 'Not available'}")
     print(f"📊 Crashes: {len(crash_data)}")
     print(f"\n🌐 Open http://localhost:8050\n")
-    app.run(debug=False, host='0.0.0.0', port=8050, threaded=True)
+    socketio.run(server, debug=False, host='0.0.0.0', port=8050)

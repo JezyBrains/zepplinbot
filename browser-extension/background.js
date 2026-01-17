@@ -1,21 +1,68 @@
 // Zeppelin Capture - Background Service Worker
-// Handles CORS-free fetch to dashboard and syncs crashes
+// Handles real-time WebSocket communication and CORS-free telemetry
+importScripts('socket.io.min.js');
 
 // Default dashboard URL
 let dashboardUrl = 'http://localhost:8050';
 
-// Load saved URL
+// Load saved URL and Initialize Socket
+let socket = null;
+
+function initSocket(url) {
+    if (socket) {
+        socket.disconnect();
+    }
+
+    console.log(`🔌 Connecting to WebSocket: ${url}`);
+    socket = io(url, {
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000
+    });
+
+    socket.on('connect', () => {
+        console.log('✅ WebSocket Connected to Dashboard');
+    });
+
+    socket.on('status', (data) => {
+        console.log('📡 Dashboard Status:', data.data);
+    });
+
+    socket.on('signal_update', (data) => {
+        console.log('⚡ Zero-Delay Signal received:', data);
+        // Broadcast to all tabs running content scripts
+        chrome.tabs.query({}, (tabs) => {
+            tabs.forEach(tab => {
+                try {
+                    chrome.tabs.sendMessage(tab.id, {
+                        action: 'updateSettings',
+                        signal: data.signal,
+                        target: data.target,
+                        betAmount: data.bet,
+                        prob: data.prob
+                    }).catch(() => { });
+                } catch (e) { }
+            });
+        });
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ WebSocket Disconnected');
+    });
+}
+
 chrome.storage.local.get(['dashboardUrl'], (data) => {
     if (data.dashboardUrl) {
         dashboardUrl = data.dashboardUrl;
     }
+    initSocket(dashboardUrl);
 });
 
-// Listen for storage changes
+// Listen for storage changes to reconnect if URL changes
 chrome.storage.onChanged.addListener((changes) => {
     if (changes.dashboardUrl) {
         dashboardUrl = changes.dashboardUrl.newValue;
         console.log('📡 Dashboard URL updated:', dashboardUrl);
+        initSocket(dashboardUrl);
     }
 });
 
@@ -98,21 +145,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             chrome.storage.local.set({ crashes });
         });
 
-        // Also send to dashboard API
-        fetch(`${dashboardUrl}/api/crash`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ value: value })
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log(`📊 Crash ${value}x synced to dashboard`);
-                }
-            })
-            .catch(error => {
-                console.log('⚠️ Could not sync crash to dashboard:', error.message);
-            });
+        // Also send to dashboard API via Socket (Faster)
+        if (socket && socket.connected) {
+            socket.emit('crash_report', { value: value });
+            console.log(`⚡ Crash ${value}x sent via WebSocket`);
+        } else {
+            // Fallback to fetch if socket not ready
+            fetch(`${dashboardUrl}/api/crash`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: value })
+            }).catch(() => { });
+        }
     }
 
     // Send betting behavior to dashboard (CORS-free)

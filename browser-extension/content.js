@@ -95,14 +95,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             break;
 
         case 'updateSettings':
-            betAmount = msg.betAmount || betAmount;
+            betAmount = msg.betAmount || msg.bet || betAmount;
             maxLosses = msg.maxLosses || maxLosses;
-            targetMultiplier = msg.target || targetMultiplier;
+            targetMultiplier = msg.target || msg.targetMultiplier || targetMultiplier;
+            if (msg.signal) {
+                currentSignal = msg.signal;
+                console.log(`⚡ Real-time Signal update: ${currentSignal}`);
+            }
             if (msg.dashboardUrl) {
                 DASHBOARD_URL = msg.dashboardUrl;
-                console.log(`📡 Dashboard URL updated: ${DASHBOARD_URL}`);
             }
-            showNotification('⚙️ Settings updated', 'info');
+            // Update UI/Notification only if it's a manual update or important signal change
+            if (msg.action === 'updateSettings' && !msg.signal) {
+                showNotification('⚙️ Settings updated', 'info');
+            }
             break;
 
         case 'saveCrashToFile':
@@ -452,7 +458,7 @@ function startObserver() {
             if (bettingData.totalBettors > 0 || bettingData.roundId) {
                 sendBettingDataToDashboard(bettingData);
             }
-        }, 500);  // Check every 500ms for real-time updates
+        }, 200);  // Higher precision: Check every 200ms
     }
 
     // Start round timing tracker for behavioral analysis
