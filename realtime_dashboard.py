@@ -13,6 +13,7 @@ import json
 import requests
 import time
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask import request, jsonify
 from flask_socketio import SocketIO, emit
 
 # Import V2 modules at top level to avoid callback lag
@@ -269,14 +270,6 @@ def get_temporal_insights(timeframe='all'):
 
 
 # REAL-TIME MODE: Don't load historical data - only use incoming live data
-# apply to the server (flask app) - trust 2 layers (Traefik + Dokploy)
-server.wsgi_app = ProxyFix(server.wsgi_app, x_for=2, x_proto=1, x_host=1, x_prefix=1)
-
-@server.before_request
-def debug_ip():
-    if request.path.startswith('/api/'):
-        print(f"🔍 IP DEBUG: remote_addr={request.remote_addr} | Headers={dict(request.headers)}")
-
 print("🔴 REAL-TIME MODE: Waiting for live data from extension...")
 
 # ============ APP ============
