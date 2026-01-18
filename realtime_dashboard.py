@@ -1523,7 +1523,7 @@ def update_master(n, lang, tf):
     MASTER UPDATE CALLBACK - Consolidates 15+ callbacks into ONE request.
     This eliminates 502 Bad Gateway errors by preventing concurrent request 'stampedes'.
     """
-    if n is None: return [dash.no_update] * 37
+    if n is None: return [dash.no_update] * 64
     
     try:
         # --- DATA PREP ---
