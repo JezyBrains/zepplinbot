@@ -415,9 +415,13 @@ betting_behavior = {
     'history': []  # Keep last 50 snapshots
 }
 
+# Track last data received time for connection indicator
+last_data_time = None
+data_receive_count = 0
+
 @server.route('/api/betting-behavior', methods=['POST', 'OPTIONS'])
 def api_betting_behavior():
-    global betting_behavior, last_ip
+    global betting_behavior, last_ip, last_data_time, data_receive_count
     if request.method == 'OPTIONS': return '', 200
     try:
         # ProxyFix handles X-Forwarded-For automatically
@@ -432,6 +436,10 @@ def api_betting_behavior():
             server_time = int(time.time() * 1000)  # Current server time in ms
             latency_ms = server_time - ext_timestamp
             print(f"📡 LATENCY: {latency_ms}ms (Ext→Server) | Bettors: {data.get('totalBettors', 0)}")
+        
+        # Track data receipt for connection indicator
+        last_data_time = datetime.datetime.now()
+        data_receive_count += 1
         
         # Update live stats
         betting_behavior['totalBettors'] = data.get('totalBettors', 0)
@@ -584,6 +592,16 @@ def create_sidebar():
                 ])
             ], style={'padding': '16px 0', 'borderTop': '1px solid rgba(255,255,255,0.05)'})
         ]),
+
+        # CONNECTION STATUS INDICATOR
+        html.Div([
+            html.Div("DATA FEED", style={'fontSize': '9px', 'letterSpacing': '2px', 'color': 'rgba(255,255,255,0.3)', 'marginBottom': '8px'}),
+            html.Div([
+                html.Span("●", id="conn-status-dot", style={'color': '#10b981', 'marginRight': '8px', 'animation': 'pulse 1s infinite'}),
+                html.Span(id="conn-status-text", children="Waiting...", style={'fontSize': '11px', 'color': 'rgba(255,255,255,0.6)'})
+            ]),
+            html.Div(id="conn-last-update", children="", style={'fontSize': '9px', 'color': 'rgba(255,255,255,0.3)', 'marginTop': '4px'})
+        ], style={'padding': '16px 0', 'borderTop': '1px solid rgba(255,255,255,0.05)'}),
         
         # Data display
         html.Div(id="sidebar-crashes", style={'display': 'none'}),
@@ -1433,6 +1451,9 @@ def route(path):
         # 1. Sidebar
         Output('sidebar-crashes', 'children'),
         Output('sidebar-crashes-val', 'children'),
+        Output('conn-status-dot', 'style'),
+        Output('conn-status-text', 'children'),
+        Output('conn-last-update', 'children'),
         
         # 2. Header
         Output('hdr-regime', 'children'),
@@ -1523,7 +1544,7 @@ def update_master(n, lang, tf):
     MASTER UPDATE CALLBACK - Consolidates 15+ callbacks into ONE request.
     This eliminates 502 Bad Gateway errors by preventing concurrent request 'stampedes'.
     """
-    if n is None: return [dash.no_update] * 64
+    if n is None: return [dash.no_update] * 67
     
     try:
         # --- DATA PREP ---
@@ -1547,6 +1568,24 @@ def update_master(n, lang, tf):
 
         # --- 1. SIDEBAR ---
         crashes_count = str(len(crash_data))
+        
+        # Connection status indicator
+        if last_data_time:
+            time_diff = (datetime.datetime.now() - last_data_time).total_seconds()
+            if time_diff < 5:
+                conn_dot_style = {'color': '#10b981', 'marginRight': '8px', 'animation': 'pulse 1s infinite'}
+                conn_text = f"LIVE ({data_receive_count} packets)"
+            elif time_diff < 30:
+                conn_dot_style = {'color': '#ffc107', 'marginRight': '8px'}
+                conn_text = f"IDLE ({int(time_diff)}s ago)"
+            else:
+                conn_dot_style = {'color': '#e63757', 'marginRight': '8px'}
+                conn_text = "DISCONNECTED"
+            conn_last = last_data_time.strftime('%H:%M:%S')
+        else:
+            conn_dot_style = {'color': '#666', 'marginRight': '8px'}
+            conn_text = "Waiting for data..."
+            conn_last = "No data received"
         
         # --- 2. HEADER ---
         regime = sig.get('regime', 'NEUTRAL').upper()
@@ -1755,7 +1794,7 @@ def update_master(n, lang, tf):
         audit_table = timing_table = html.Div("...")
 
         return (
-            crashes_count, crashes_count, 
+            crashes_count, crashes_count, conn_dot_style, conn_text, conn_last,
             regime, hdr_regime_class, hash_stream, latency,
             target_display, consensus_pct_display, ftr_time, ftr_ip,
             hud_class, signal, info, consensus_pct_display, target_display, pof_display, mv_display,
@@ -1769,7 +1808,7 @@ def update_master(n, lang, tf):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return [dash.no_update] * 64
+        return [dash.no_update] * 67
 
 
 if __name__ == '__main__':
