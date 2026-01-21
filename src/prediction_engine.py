@@ -200,14 +200,35 @@ class PredictionEngine:
         
         for model_name, model in self.models.items():
             try:
-                predictions = []
-                
-                for i in range(len(test_data)):
-                    recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
-                    pred = model.predict_next(recent_data, steps=1)[0]
-                    predictions.append(pred)
-                
-                predictions = np.array(predictions)
+                # Check if model supports batch prediction and has sufficient history
+                if (hasattr(model, 'predict_batch') and
+                    hasattr(model, 'sequence_length') and
+                    len(train_data) >= model.sequence_length):
+
+                    logger.info(f"Using optimized batch prediction for {model_name}")
+                    X_batch = []
+
+                    # Construct batches using slicing instead of concatenation
+                    # For each test point i (at split_idx + i), the input is the sequence ending at that point
+                    for i in range(len(test_data)):
+                        end_idx = split_idx + i
+                        start_idx = end_idx - model.sequence_length
+                        seq = data[start_idx:end_idx]
+                        X_batch.append(seq)
+
+                    X_batch = np.array(X_batch)
+                    predictions = model.predict_batch(X_batch)
+
+                else:
+                    # Fallback to standard iterative prediction
+                    predictions = []
+
+                    for i in range(len(test_data)):
+                        recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
+                        pred = model.predict_next(recent_data, steps=1)[0]
+                        predictions.append(pred)
+
+                    predictions = np.array(predictions)
                 
                 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
                 

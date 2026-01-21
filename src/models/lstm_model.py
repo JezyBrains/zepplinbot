@@ -98,6 +98,28 @@ class LSTMPredictor:
             current_sequence_scaled = current_sequence_scaled.reshape(-1, 1)
         
         return np.array(predictions)
+
+    def predict_batch(self, sequences: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        # sequences shape: (batch_size, sequence_length)
+        batch_size, seq_len = sequences.shape
+
+        # Reshape to 2D for scaler: (batch_size * sequence_length, 1)
+        flat_seq = sequences.reshape(-1, 1)
+        scaled_flat = self.scaler.transform(flat_seq)
+
+        # Reshape back to 3D for LSTM: (batch_size, sequence_length, 1)
+        scaled_seq = scaled_flat.reshape(batch_size, seq_len, 1)
+
+        # Predict in batch
+        predictions_scaled = self.model.predict(scaled_seq, verbose=0)
+
+        # Inverse transform predictions
+        predictions = self.scaler.inverse_transform(predictions_scaled)
+
+        return predictions.flatten()
     
     def get_confidence_interval(self, recent_data: np.ndarray, 
                                n_simulations: int = 100, confidence: float = 0.95):
