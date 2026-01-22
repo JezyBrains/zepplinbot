@@ -28,7 +28,9 @@ class EnsemblePredictor:
                 
                 predictions = []
                 for i in range(len(test_data)):
-                    recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
+                    # Optimization: Use slicing instead of concatenation to avoid O(N^2) memory copying
+                    # train_data + test_data[:i] is equivalent to data[:split_idx + i]
+                    recent_data = data[:split_idx + i]
                     pred = model.predict_next(recent_data, steps=1)[0]
                     predictions.append(pred)
                 

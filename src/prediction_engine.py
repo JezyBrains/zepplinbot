@@ -203,7 +203,8 @@ class PredictionEngine:
                 predictions = []
                 
                 for i in range(len(test_data)):
-                    recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
+                    # Optimization: Use slicing instead of concatenation
+                    recent_data = data[:split_idx + i]
                     pred = model.predict_next(recent_data, steps=1)[0]
                     predictions.append(pred)
                 
