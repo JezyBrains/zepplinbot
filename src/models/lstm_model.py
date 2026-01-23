@@ -98,6 +98,34 @@ class LSTMPredictor:
             current_sequence_scaled = current_sequence_scaled.reshape(-1, 1)
         
         return np.array(predictions)
+
+    def predict_batch(self, train_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        if len(test_data) == 0:
+            return np.array([])
+
+        # Prepare input data: context from train + test data (excluding last element)
+        input_data = np.concatenate([train_data[-self.sequence_length:], test_data[:-1]])
+
+        # Scale input data
+        input_data_scaled = self.scaler.transform(input_data.reshape(-1, 1)).flatten()
+
+        # Create sequences
+        X_batch = []
+        for i in range(len(test_data)):
+            X_batch.append(input_data_scaled[i:i+self.sequence_length])
+
+        X_batch = np.array(X_batch).reshape(len(test_data), self.sequence_length, 1)
+
+        # Batch prediction
+        pred_scaled = self.model.predict(X_batch, verbose=0, batch_size=32)
+
+        # Inverse transform
+        predictions = self.scaler.inverse_transform(pred_scaled).flatten()
+
+        return predictions
     
     def get_confidence_interval(self, recent_data: np.ndarray, 
                                n_simulations: int = 100, confidence: float = 0.95):

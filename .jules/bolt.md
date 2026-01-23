@@ -1,0 +1,3 @@
+## 2026-01-23 - Batch Prediction Optimization
+**Learning:** Evaluating models by looping through the test set one sample at a time (simulating streaming) is extremely slow due to Python overhead and repeated inference calls (especially for TensorFlow). Batching the input data using sliding windows allows for vectorized inference, resulting in massive speedups (observed 26x improvement).
+**Action:** When implementing walk-forward validation or evaluation, always pre-construct the batch of inputs (sliding windows) and use batch prediction methods if available, rather than iterating sample by sample.
