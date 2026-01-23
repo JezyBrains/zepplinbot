@@ -96,6 +96,39 @@ class XGBoostPredictor:
             current_data = np.append(current_data, pred)
         
         return np.array(predictions)
+
+    def predict_batch(self, train_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        if len(test_data) == 0:
+            return np.array([])
+
+        input_data = np.concatenate([train_data[-self.sequence_length:], test_data[:-1]])
+
+        X_batch = []
+        for i in range(len(test_data)):
+            sequence = input_data[i:i+self.sequence_length]
+
+            features = [
+                np.mean(sequence),
+                np.std(sequence),
+                np.min(sequence),
+                np.max(sequence),
+                sequence[-1],
+                sequence[-1] - sequence[-2] if len(sequence) > 1 else 0,
+                np.mean(sequence[-5:]) if len(sequence) >= 5 else np.mean(sequence),
+                np.mean(sequence[-10:]) if len(sequence) >= 10 else np.mean(sequence),
+            ]
+
+            features.extend(sequence[-10:].tolist() if len(sequence) >= 10 else sequence.tolist())
+
+            X_batch.append(features)
+
+        X_batch = np.array(X_batch)
+        X_scaled = self.scaler.transform(X_batch)
+
+        return self.model.predict(X_scaled)
     
     def save_model(self, filepath: str):
         joblib.dump(self.model, f"{filepath}_xgboost.pkl")
@@ -187,6 +220,38 @@ class LightGBMPredictor:
             current_data = np.append(current_data, pred)
         
         return np.array(predictions)
+
+    def predict_batch(self, train_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        if len(test_data) == 0:
+            return np.array([])
+
+        input_data = np.concatenate([train_data[-self.sequence_length:], test_data[:-1]])
+
+        X_batch = []
+        for i in range(len(test_data)):
+            sequence = input_data[i:i+self.sequence_length]
+
+            features = [
+                np.mean(sequence),
+                np.std(sequence),
+                np.min(sequence),
+                np.max(sequence),
+                sequence[-1],
+                sequence[-1] - sequence[-2] if len(sequence) > 1 else 0,
+                np.mean(sequence[-5:]) if len(sequence) >= 5 else np.mean(sequence),
+            ]
+
+            features.extend(sequence[-10:].tolist() if len(sequence) >= 10 else sequence.tolist())
+
+            X_batch.append(features)
+
+        X_batch = np.array(X_batch)
+        X_scaled = self.scaler.transform(X_batch)
+
+        return self.model.predict(X_scaled)
     
     def save_model(self, filepath: str):
         joblib.dump(self.model, f"{filepath}_lightgbm.pkl")
