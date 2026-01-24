@@ -6,6 +6,7 @@ import xgboost as xgb
 import lightgbm as lgb
 import joblib
 import logging
+from numpy.lib.stride_tricks import sliding_window_view
 
 logger = logging.getLogger(__name__)
 
@@ -21,28 +22,54 @@ class XGBoostPredictor:
         self.scaler = StandardScaler()
         
     def create_features(self, data: np.ndarray):
-        X, y = [], []
+        # Vectorized feature creation
+        if len(data) <= self.sequence_length:
+            return np.array([]), np.array([])
+            
+        # Create windows of size sequence_length
+        # windows shape: (n_windows, sequence_length)
+        windows = sliding_window_view(data, window_shape=self.sequence_length)
+
+        # We need y to be the value *after* each sequence.
+        # The last window in `windows` ends at the very last element of data.
+        # So it has no "next" element. We exclude it.
+        X_windows = windows[:-1]
+        y = data[self.sequence_length:]
+
+        if len(X_windows) == 0:
+             return np.array([]), np.array([])
+
+        # Compute features vectorized
+        # 1. Basic stats
+        f_mean = np.mean(X_windows, axis=1, keepdims=True)
+        f_std = np.std(X_windows, axis=1, keepdims=True)
+        f_min = np.min(X_windows, axis=1, keepdims=True)
+        f_max = np.max(X_windows, axis=1, keepdims=True)
+
+        # 2. Last element
+        f_last = X_windows[:, -1:]
+
+        # 3. Difference (last - second_last)
+        if self.sequence_length > 1:
+            f_diff = (X_windows[:, -1] - X_windows[:, -2]).reshape(-1, 1)
+        else:
+            f_diff = np.zeros((X_windows.shape[0], 1))
+            
+        # 4. Mean of last 5
+        f_mean5 = np.mean(X_windows[:, -5:], axis=1, keepdims=True)
+
+        # 5. Mean of last 10 (specific to XGBoostPredictor)
+        f_mean10 = np.mean(X_windows[:, -10:], axis=1, keepdims=True)
+
+        # 6. Last 10 elements (raw)
+        f_last10 = X_windows[:, -10:]
         
-        for i in range(len(data) - self.sequence_length):
-            sequence = data[i:i + self.sequence_length]
-            
-            features = [
-                np.mean(sequence),
-                np.std(sequence),
-                np.min(sequence),
-                np.max(sequence),
-                sequence[-1],
-                sequence[-1] - sequence[-2] if len(sequence) > 1 else 0,
-                np.mean(sequence[-5:]) if len(sequence) >= 5 else np.mean(sequence),
-                np.mean(sequence[-10:]) if len(sequence) >= 10 else np.mean(sequence),
-            ]
-            
-            features.extend(sequence[-10:].tolist() if len(sequence) >= 10 else sequence.tolist())
-            
-            X.append(features)
-            y.append(data[i + self.sequence_length])
-        
-        return np.array(X), np.array(y)
+        # Combine all features
+        X = np.hstack([
+            f_mean, f_std, f_min, f_max, f_last, f_diff, f_mean5, f_mean10, f_last10
+        ])
+
+        return X, y
     
     def train(self, data: np.ndarray):
         X, y = self.create_features(data)
@@ -119,27 +146,45 @@ class LightGBMPredictor:
         self.scaler = StandardScaler()
         
     def create_features(self, data: np.ndarray):
-        X, y = [], []
+        # Vectorized feature creation
+        if len(data) <= self.sequence_length:
+            return np.array([]), np.array([])
+            
+        windows = sliding_window_view(data, window_shape=self.sequence_length)
+        X_windows = windows[:-1]
+        y = data[self.sequence_length:]
+
+        if len(X_windows) == 0:
+             return np.array([]), np.array([])
+
+        # 1. Basic stats
+        f_mean = np.mean(X_windows, axis=1, keepdims=True)
+        f_std = np.std(X_windows, axis=1, keepdims=True)
+        f_min = np.min(X_windows, axis=1, keepdims=True)
+        f_max = np.max(X_windows, axis=1, keepdims=True)
+
+        # 2. Last element
+        f_last = X_windows[:, -1:]
+
+        # 3. Difference
+        if self.sequence_length > 1:
+            f_diff = (X_windows[:, -1] - X_windows[:, -2]).reshape(-1, 1)
+        else:
+            f_diff = np.zeros((X_windows.shape[0], 1))
+            
+        # 4. Mean of last 5
+        f_mean5 = np.mean(X_windows[:, -5:], axis=1, keepdims=True)
+
+        # Note: LightGBMPredictor does NOT have mean of last 10
+
+        # 5. Last 10 elements
+        f_last10 = X_windows[:, -10:]
+
+        X = np.hstack([
+            f_mean, f_std, f_min, f_max, f_last, f_diff, f_mean5, f_last10
+        ])
         
-        for i in range(len(data) - self.sequence_length):
-            sequence = data[i:i + self.sequence_length]
-            
-            features = [
-                np.mean(sequence),
-                np.std(sequence),
-                np.min(sequence),
-                np.max(sequence),
-                sequence[-1],
-                sequence[-1] - sequence[-2] if len(sequence) > 1 else 0,
-                np.mean(sequence[-5:]) if len(sequence) >= 5 else np.mean(sequence),
-            ]
-            
-            features.extend(sequence[-10:].tolist() if len(sequence) >= 10 else sequence.tolist())
-            
-            X.append(features)
-            y.append(data[i + self.sequence_length])
-        
-        return np.array(X), np.array(y)
+        return X, y
     
     def train(self, data: np.ndarray):
         X, y = self.create_features(data)
