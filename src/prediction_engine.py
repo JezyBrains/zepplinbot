@@ -202,12 +202,22 @@ class PredictionEngine:
             try:
                 predictions = []
                 
-                for i in range(len(test_data)):
-                    recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
-                    pred = model.predict_next(recent_data, steps=1)[0]
-                    predictions.append(pred)
+                # Check if model supports batch prediction (optimization)
+                if hasattr(model, 'predict_batch'):
+                    try:
+                        # predict_batch should use the full data and the split index
+                        # to generate predictions corresponding to test_data
+                        predictions = model.predict_batch(data, split_idx)
+                    except Exception as e:
+                        logger.warning(f"Batch prediction failed for {model_name}, falling back to iterative: {e}")
+                        predictions = []
                 
-                predictions = np.array(predictions)
+                if len(predictions) == 0:
+                    for i in range(len(test_data)):
+                        recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
+                        pred = model.predict_next(recent_data, steps=1)[0]
+                        predictions.append(pred)
+                    predictions = np.array(predictions)
                 
                 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
                 

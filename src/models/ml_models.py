@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 import xgboost as xgb
@@ -96,6 +97,61 @@ class XGBoostPredictor:
             current_data = np.append(current_data, pred)
         
         return np.array(predictions)
+
+    def _compute_features_batch(self, windows: np.ndarray) -> np.ndarray:
+        """Vectorized feature computation for sliding windows."""
+        means = np.mean(windows, axis=1)
+        stds = np.std(windows, axis=1)
+        mins = np.min(windows, axis=1)
+        maxs = np.max(windows, axis=1)
+        last_vals = windows[:, -1]
+
+        # sequence[-1] - sequence[-2]
+        diffs = windows[:, -1] - windows[:, -2]
+
+        if self.sequence_length >= 10:
+             means_5 = np.mean(windows[:, -5:], axis=1)
+             means_10 = np.mean(windows[:, -10:], axis=1)
+             last_10 = windows[:, -10:]
+        else:
+             # Fallback logic if sequence length is small
+             means_5 = np.mean(windows[:, -5:], axis=1) if self.sequence_length >= 5 else means
+             means_10 = means
+             last_10 = windows
+
+        features_base = np.column_stack([
+            means, stds, mins, maxs, last_vals, diffs, means_5, means_10
+        ])
+
+        X = np.hstack([features_base, last_10])
+        return X
+
+    def predict_batch(self, full_data: np.ndarray, train_size: int) -> np.ndarray:
+        """
+        Batch prediction for evaluation on test set.
+        Avoids iterative concatenation and single-step inference.
+        """
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        # We need input history for the test set.
+        # Target: full_data[train_size:]
+        # First input window ends at train_size-1 (last training point)
+        # Last input window ends at len(full_data)-2 (second to last point)
+
+        # Slice full_data to cover all required history
+        relevant_data = full_data[train_size - self.sequence_length : -1]
+
+        if len(relevant_data) < self.sequence_length:
+             return np.array([])
+
+        windows = sliding_window_view(relevant_data, window_shape=self.sequence_length)
+
+        X = self._compute_features_batch(windows)
+        X_scaled = self.scaler.transform(X)
+
+        predictions = self.model.predict(X_scaled)
+        return predictions
     
     def save_model(self, filepath: str):
         joblib.dump(self.model, f"{filepath}_xgboost.pkl")
@@ -188,6 +244,54 @@ class LightGBMPredictor:
         
         return np.array(predictions)
     
+    def _compute_features_batch(self, windows: np.ndarray) -> np.ndarray:
+        """Vectorized feature computation for sliding windows."""
+        means = np.mean(windows, axis=1)
+        stds = np.std(windows, axis=1)
+        mins = np.min(windows, axis=1)
+        maxs = np.max(windows, axis=1)
+        last_vals = windows[:, -1]
+
+        # sequence[-1] - sequence[-2]
+        diffs = windows[:, -1] - windows[:, -2]
+
+        if self.sequence_length >= 5:
+             means_5 = np.mean(windows[:, -5:], axis=1)
+        else:
+             means_5 = means
+
+        if self.sequence_length >= 10:
+             last_10 = windows[:, -10:]
+        else:
+             last_10 = windows
+
+        features_base = np.column_stack([
+            means, stds, mins, maxs, last_vals, diffs, means_5
+        ])
+
+        X = np.hstack([features_base, last_10])
+        return X
+
+    def predict_batch(self, full_data: np.ndarray, train_size: int) -> np.ndarray:
+        """
+        Batch prediction for evaluation on test set.
+        """
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        relevant_data = full_data[train_size - self.sequence_length : -1]
+
+        if len(relevant_data) < self.sequence_length:
+             return np.array([])
+
+        windows = sliding_window_view(relevant_data, window_shape=self.sequence_length)
+
+        X = self._compute_features_batch(windows)
+        X_scaled = self.scaler.transform(X)
+
+        predictions = self.model.predict(X_scaled)
+        return predictions
+
     def save_model(self, filepath: str):
         joblib.dump(self.model, f"{filepath}_lightgbm.pkl")
         joblib.dump(self.scaler, f"{filepath}_lightgbm_scaler.pkl")

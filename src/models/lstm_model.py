@@ -98,6 +98,39 @@ class LSTMPredictor:
             current_sequence_scaled = current_sequence_scaled.reshape(-1, 1)
         
         return np.array(predictions)
+
+    def predict_batch(self, full_data: np.ndarray, train_size: int) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        # We need input history for the test set.
+        # Target: full_data[train_size:]
+        # Slice full_data to cover all required history
+        # relevant_data includes history for the first prediction up to history for the last prediction
+        relevant_data = full_data[train_size - self.sequence_length : -1]
+
+        if len(relevant_data) < self.sequence_length:
+             return np.array([])
+
+        # Scale the data FIRST (the whole slice)
+        # Note: LSTMPredictor scales using self.scaler (MinMaxScaler)
+        # It expects 2D input (n_samples, 1)
+        relevant_data_reshaped = relevant_data.reshape(-1, 1)
+        relevant_data_scaled = self.scaler.transform(relevant_data_reshaped)
+
+        # Create windows from SCALED data
+        from numpy.lib.stride_tricks import sliding_window_view
+        windows = sliding_window_view(relevant_data_scaled.flatten(), window_shape=self.sequence_length)
+
+        # Reshape for LSTM: (batch, seq_len, features=1)
+        X = windows.reshape(-1, self.sequence_length, 1)
+
+        # Predict
+        predictions_scaled = self.model.predict(X, verbose=0)
+
+        # Inverse transform
+        predictions = self.scaler.inverse_transform(predictions_scaled).flatten()
+        return predictions
     
     def get_confidence_interval(self, recent_data: np.ndarray, 
                                n_simulations: int = 100, confidence: float = 0.95):
