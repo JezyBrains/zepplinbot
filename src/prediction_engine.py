@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 import os
+from numpy.lib.stride_tricks import sliding_window_view
 
 from models.lstm_model import LSTMPredictor
 from models.prophet_model import ProphetPredictor
@@ -202,12 +203,39 @@ class PredictionEngine:
             try:
                 predictions = []
                 
-                for i in range(len(test_data)):
-                    recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
-                    pred = model.predict_next(recent_data, steps=1)[0]
-                    predictions.append(pred)
+                # Use batch prediction if available for performance
+                if hasattr(model, 'predict_batch') and hasattr(model, 'sequence_length'):
+                    try:
+                        full_data = np.concatenate([train_data, test_data])
+                        start_idx = split_idx - model.sequence_length
+
+                        if start_idx >= 0:
+                            # We need input sequences for each test point
+                            # Slice ending at -1 ensures we don't include the very last test point in input
+                            # (because we want to predict it)
+                            data_slice = full_data[start_idx:-1] if len(test_data) > 1 else full_data[start_idx:start_idx+model.sequence_length]
+
+                            # Handle edge case where test_data is length 1
+                            if len(test_data) == 1:
+                                input_sequences = data_slice.reshape(1, -1)
+                            else:
+                                input_sequences = sliding_window_view(data_slice, window_shape=model.sequence_length)
+
+                            logger.info(f"Using batch prediction for {model_name} (batch size: {len(input_sequences)})")
+                            predictions = model.predict_batch(input_sequences)
+                        else:
+                            raise ValueError("Not enough history for batch prediction")
+                    except Exception as e:
+                        logger.warning(f"Batch prediction failed for {model_name}, falling back to loop: {e}")
+                        predictions = []
                 
-                predictions = np.array(predictions)
+                if len(predictions) == 0:
+                    for i in range(len(test_data)):
+                        recent_data = np.concatenate([train_data, test_data[:i]]) if i > 0 else train_data
+                        pred = model.predict_next(recent_data, steps=1)[0]
+                        predictions.append(pred)
+
+                    predictions = np.array(predictions)
                 
                 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
                 
