@@ -99,6 +99,31 @@ class LSTMPredictor:
         
         return np.array(predictions)
     
+    def predict_batch(self, input_sequences: np.ndarray) -> np.ndarray:
+        """
+        Predict a batch of sequences efficiently.
+        input_sequences: (batch_size, sequence_length)
+        """
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        batch_size = input_sequences.shape[0]
+
+        # Flatten to scale: (batch_size * sequence_length, 1)
+        flat_input = input_sequences.reshape(-1, 1)
+        scaled_flat = self.scaler.transform(flat_input)
+
+        # Reshape for LSTM: (batch_size, sequence_length, 1)
+        X = scaled_flat.reshape(batch_size, self.sequence_length, 1)
+
+        # Predict
+        pred_scaled = self.model.predict(X, verbose=0)
+
+        # Inverse transform
+        predictions = self.scaler.inverse_transform(pred_scaled)
+
+        return predictions.flatten()
+
     def get_confidence_interval(self, recent_data: np.ndarray, 
                                n_simulations: int = 100, confidence: float = 0.95):
         predictions = []
