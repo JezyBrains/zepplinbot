@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 import pandas as pd
 from tensorflow import keras
 from tensorflow.keras import layers
@@ -98,6 +99,52 @@ class LSTMPredictor:
             current_sequence_scaled = current_sequence_scaled.reshape(-1, 1)
         
         return np.array(predictions)
+
+    def predict_batch(self, data: np.ndarray, start_index: int) -> np.ndarray:
+        """
+        Predicts values starting from start_index using history from data.
+        Returns predictions corresponding to data[start_index:].
+        """
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        if start_index < self.sequence_length:
+             raise ValueError("start_index must be >= sequence_length to have sufficient history")
+
+        # Transform all data first (vectorized)
+        data_scaled = self.scaler.transform(data.reshape(-1, 1)).flatten()
+
+        # We use sliding_window_view to get all windows of size sequence_length
+        # windows[j] corresponds to data[j : j + sequence_length]
+        # Input for target at index i is data[i - sequence_length : i]
+        # This corresponds to windows[i - sequence_length]
+
+        windows = sliding_window_view(data_scaled, window_shape=self.sequence_length)
+
+        # Calculate indices into 'windows'
+        # We want targets from start_index to len(data)-1
+        # So we want windows from index (start_index - sequence_length) to (len(data) - 1 - sequence_length)
+
+        start_win_idx = start_index - self.sequence_length
+        # sliding_window_view returns shape (N - k + 1, k)
+        # So maximum valid index is len(data) - sequence_length
+
+        # We want input for target at len(data)-1, which is at index len(data)-1-seq_len
+        end_win_idx = len(data) - self.sequence_length
+
+        X_batch = windows[start_win_idx:end_win_idx]
+
+        if len(X_batch) == 0:
+            return np.array([])
+
+        # Reshape for LSTM: (samples, timesteps, features)
+        X_batch = X_batch.reshape(-1, self.sequence_length, 1)
+
+        # Batch prediction
+        pred_scaled = self.model.predict(X_batch, verbose=0)
+        predictions = self.scaler.inverse_transform(pred_scaled)
+
+        return predictions.flatten()
     
     def get_confidence_interval(self, recent_data: np.ndarray, 
                                n_simulations: int = 100, confidence: float = 0.95):

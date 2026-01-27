@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
@@ -96,6 +97,44 @@ class XGBoostPredictor:
             current_data = np.append(current_data, pred)
         
         return np.array(predictions)
+
+    def predict_batch(self, data: np.ndarray, start_index: int) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        if start_index < self.sequence_length:
+             raise ValueError("start_index must be >= sequence_length")
+
+        windows = sliding_window_view(data, window_shape=self.sequence_length)
+        start_win_idx = start_index - self.sequence_length
+        end_win_idx = len(data) - self.sequence_length
+        X_batch = windows[start_win_idx:end_win_idx]
+
+        if len(X_batch) == 0:
+             return np.array([])
+
+        # Vectorized feature creation for XGBoost
+        f_mean = np.mean(X_batch, axis=1)
+        f_std = np.std(X_batch, axis=1)
+        f_min = np.min(X_batch, axis=1)
+        f_max = np.max(X_batch, axis=1)
+        f_last = X_batch[:, -1]
+        f_diff = X_batch[:, -1] - X_batch[:, -2]
+        f_mean_5 = np.mean(X_batch[:, -5:], axis=1)
+        f_mean_10 = np.mean(X_batch[:, -10:], axis=1)
+
+        last_10 = X_batch[:, -10:]
+
+        # Combine features
+        features = np.column_stack([
+            f_mean, f_std, f_min, f_max, f_last, f_diff, f_mean_5, f_mean_10,
+            last_10
+        ])
+
+        X_scaled = self.scaler.transform(features)
+        predictions = self.model.predict(X_scaled)
+
+        return predictions
     
     def save_model(self, filepath: str):
         joblib.dump(self.model, f"{filepath}_xgboost.pkl")
@@ -187,6 +226,43 @@ class LightGBMPredictor:
             current_data = np.append(current_data, pred)
         
         return np.array(predictions)
+
+    def predict_batch(self, data: np.ndarray, start_index: int) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Model not trained yet")
+
+        if start_index < self.sequence_length:
+             raise ValueError("start_index must be >= sequence_length")
+
+        windows = sliding_window_view(data, window_shape=self.sequence_length)
+        start_win_idx = start_index - self.sequence_length
+        end_win_idx = len(data) - self.sequence_length
+        X_batch = windows[start_win_idx:end_win_idx]
+
+        if len(X_batch) == 0:
+             return np.array([])
+
+        # Vectorized feature creation for LightGBM
+        f_mean = np.mean(X_batch, axis=1)
+        f_std = np.std(X_batch, axis=1)
+        f_min = np.min(X_batch, axis=1)
+        f_max = np.max(X_batch, axis=1)
+        f_last = X_batch[:, -1]
+        f_diff = X_batch[:, -1] - X_batch[:, -2]
+        f_mean_5 = np.mean(X_batch[:, -5:], axis=1)
+
+        last_10 = X_batch[:, -10:]
+
+        # Combine features
+        features = np.column_stack([
+            f_mean, f_std, f_min, f_max, f_last, f_diff, f_mean_5,
+            last_10
+        ])
+
+        X_scaled = self.scaler.transform(features)
+        predictions = self.model.predict(X_scaled)
+
+        return predictions
     
     def save_model(self, filepath: str):
         joblib.dump(self.model, f"{filepath}_lightgbm.pkl")
