@@ -33,16 +33,42 @@ class FeatureEngine:
         self.velocity_history = deque(maxlen=100)
         self.whale_threshold_percentile = 90
         
+        # Cache for round data
+        self._cached_df = None
+        self._cached_file_mtime = 0
+        self._cached_file_size = 0
+
     def load_round_data(self, limit: int = None) -> pd.DataFrame:
         """Load round timing data from CSV."""
         if not os.path.exists(ROUND_DATA_FILE):
             return pd.DataFrame()
         try:
+            # Check file stats for cache invalidation
+            stats = os.stat(ROUND_DATA_FILE)
+            current_mtime = stats.st_mtime
+            current_size = stats.st_size
+
+            # Use cache if file hasn't changed
+            if (self._cached_df is not None and
+                self._cached_file_mtime == current_mtime and
+                self._cached_file_size == current_size):
+
+                if limit:
+                    return self._cached_df.tail(limit).copy()
+                return self._cached_df.copy()
+
+            # Load new data
             df = pd.read_csv(ROUND_DATA_FILE, on_bad_lines='skip', low_memory=False)
             df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+            # Update cache
+            self._cached_df = df
+            self._cached_file_mtime = current_mtime
+            self._cached_file_size = current_size
+
             if limit:
-                df = df.tail(limit)
-            return df
+                return df.tail(limit).copy()
+            return df.copy()
         except Exception as e:
             print(f"Feature Engine: Error loading data: {e}")
             return pd.DataFrame()
