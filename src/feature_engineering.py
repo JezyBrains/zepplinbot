@@ -33,13 +33,39 @@ class FeatureEngine:
         self.velocity_history = deque(maxlen=100)
         self.whale_threshold_percentile = 90
         
+        # Caching
+        self._data_cache = None
+        self._last_file_mtime = 0
+        self._last_file_size = 0
+
     def load_round_data(self, limit: int = None) -> pd.DataFrame:
         """Load round timing data from CSV."""
         if not os.path.exists(ROUND_DATA_FILE):
             return pd.DataFrame()
         try:
+            # Check file stats
+            stats = os.stat(ROUND_DATA_FILE)
+            current_mtime = stats.st_mtime
+            current_size = stats.st_size
+
+            # Return cached if valid
+            if (self._data_cache is not None and
+                self._last_file_mtime == current_mtime and
+                self._last_file_size == current_size):
+
+                if limit:
+                    return self._data_cache.tail(limit).copy()
+                return self._data_cache.copy()
+
+            # Load new data
             df = pd.read_csv(ROUND_DATA_FILE, on_bad_lines='skip', low_memory=False)
             df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+            # Update cache
+            self._data_cache = df
+            self._last_file_mtime = current_mtime
+            self._last_file_size = current_size
+
             if limit:
                 df = df.tail(limit)
             return df
