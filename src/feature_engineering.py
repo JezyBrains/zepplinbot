@@ -32,17 +32,33 @@ class FeatureEngine:
         self.pool_history = deque(maxlen=500)
         self.velocity_history = deque(maxlen=100)
         self.whale_threshold_percentile = 90
+        self.cached_df = None
+        self.cache_stats = {'mtime': 0, 'size': 0}
         
     def load_round_data(self, limit: int = None) -> pd.DataFrame:
-        """Load round timing data from CSV."""
+        """Load round timing data from CSV with caching."""
         if not os.path.exists(ROUND_DATA_FILE):
             return pd.DataFrame()
         try:
-            df = pd.read_csv(ROUND_DATA_FILE, on_bad_lines='skip', low_memory=False)
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            # Check file stats for cache validation
+            stats = os.stat(ROUND_DATA_FILE)
+            current_mtime = stats.st_mtime
+            current_size = stats.st_size
+
+            if (self.cached_df is not None and
+                self.cache_stats['mtime'] == current_mtime and
+                self.cache_stats['size'] == current_size):
+                df = self.cached_df
+            else:
+                # Reload data
+                df = pd.read_csv(ROUND_DATA_FILE, on_bad_lines='skip', low_memory=False)
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                self.cached_df = df
+                self.cache_stats = {'mtime': current_mtime, 'size': current_size}
+
             if limit:
-                df = df.tail(limit)
-            return df
+                return df.tail(limit).copy()
+            return df.copy()
         except Exception as e:
             print(f"Feature Engine: Error loading data: {e}")
             return pd.DataFrame()
