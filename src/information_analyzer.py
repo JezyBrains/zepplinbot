@@ -182,8 +182,9 @@ class InformationAnalyzer:
                 significant_lags.append(lag)
         
         # Ljung-Box test for overall randomness
-        q_stat = n * (n + 2) * np.sum((np.array(autocorr[:10])**2) / (n - np.arange(1, 11)))
-        p_value = 1 - stats.chi2.cdf(q_stat, df=10)
+        limit = min(len(autocorr), 10)
+        q_stat = n * (n + 2) * np.sum((np.array(autocorr[:limit])**2) / (n - np.arange(1, limit + 1)))
+        p_value = 1 - stats.chi2.cdf(q_stat, df=limit)
         
         return {
             'autocorrelations': {i+1: ac for i, ac in enumerate(autocorr)},
